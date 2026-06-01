@@ -21,6 +21,10 @@ pru/**/am335x-pru*.fw
 # Device tree build artifacts
 dts/*.dtbo
 
+# OS images
+*.img
+*.xz
+
 # Editor / OS
 .DS_Store
 *.swp
