@@ -546,6 +546,33 @@ Any change to this layout requires updating both `pru/pru0_timestamp/main.c` and
 
 ---
 
+## Bus Impact — Is the Sniffer Invisible?
+
+**Short answer:** With `listen-only on` (the default in `setup_can.sh`), the sniffer is electrically passive and invisible to all other bus nodes. Without it, the DCAN0 controller participates in the protocol.
+
+### Three interaction mechanisms
+
+| Mechanism | Default mode | Listen-only mode |
+|-----------|-------------|-----------------|
+| **ACK bit** | DCAN0 acknowledges every correctly received frame | No ACK sent — controller is fully passive |
+| **Error frames** | DCAN0 transmits a 6-bit error flag if it detects a bus error, aborting the in-progress frame | No error frames sent |
+| **Physical load** | SN65HVD230 adds ~10–20 pF capacitance | Same — unavoidable but negligible on typical bus |
+
+#### Why ACK matters
+
+The ACK slot is a wired-OR: if *any* receiver drives it dominant, the transmitter sees an ACK. In default mode, our sniffer will ACK every frame it receives. The consequence: if a real receiver goes offline, our sniffer masks the resulting ACK error — the transmitter will never know the intended recipient is gone. In listen-only mode this cannot happen.
+
+#### What listen-only mode costs
+
+- **TEC stays zero.** The controller cannot go bus-off (it never transmits, so the transmit error counter never increments). This is fine — and desirable.
+- **Some diagnostic sensitivity is reduced.** In listen-only mode, the controller detects errors internally and reports them via SocketCAN error frames to userspace, but only for errors it can observe as a receiver (stuff, CRC, form, bit-level issues visible on RX). ACK errors on frames we transmit are not applicable. `berr-reporting on` still tracks REC.
+
+### Termination — the critical hardware note
+
+**Do not add a 120 Ω termination resistor unless your sniffer is physically at one of the two bus endpoints.**
+
+A properly wired CAN bus has exactly two 120 Ω termination resistors — one at each physical end. Adding a third in the middle creates a parallel impedance of 40 Ω, causing signal reflections and degraded waveforms. If you are mid-bus tapping (the common case), wire CANH/CANL directly to the bus and leave the termination resistors alone. Only populate the 120 Ω resistor in `hardware/bom.csv` if you are replacing a bus-end terminator.
+
 ## Known Limitations
 
 - **PRU0 IEP timer rollover:** The AM335x IEP is 32-bit at 200 MHz — it rolls over every ~21.5 s. The PRU firmware tracks rollovers in a local counter; `t_fall_ns` in each ring buffer event is a monotonically increasing uint64. Python adds a one-time epoch offset calibrated at startup. Accuracy degrades by ±50 ppm (AM335x crystal tolerance) over time; restart the backend to recalibrate.
