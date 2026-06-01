@@ -1,0 +1,202 @@
+from __future__ import annotations
+
+import asyncio
+import sqlite3
+import time
+from pathlib import Path
+from typing import Optional
+
+from .models import Alert, EnrichedFrame, ErrorEvent, PruEvent, PruEventType
+
+_SCHEMA = """
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+PRAGMA page_size=4096;
+PRAGMA wal_autocheckpoint=1000;
+
+CREATE TABLE IF NOT EXISTS can_frames (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          REAL    NOT NULL,
+    can_id      INTEGER NOT NULL,
+    is_extended INTEGER NOT NULL DEFAULT 0,
+    dlc         INTEGER NOT NULL,
+    data        BLOB,
+    pru_ts_ns   INTEGER,
+    is_aborted  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_frames_ts    ON can_frames(ts);
+CREATE INDEX IF NOT EXISTS idx_frames_id    ON can_frames(can_id);
+
+CREATE TABLE IF NOT EXISTS error_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          REAL    NOT NULL,
+    error_class INTEGER NOT NULL,
+    error_data  BLOB,
+    tec         INTEGER,
+    rec         INTEGER,
+    bus_state   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_errors_ts ON error_events(ts);
+
+CREATE TABLE IF NOT EXISTS pru_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          REAL    NOT NULL,
+    event_type  INTEGER NOT NULL,
+    pru_ts_ns   INTEGER NOT NULL,
+    pulse_ns    INTEGER,
+    matched     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_pru_ts ON pru_events(ts);
+
+CREATE TABLE IF NOT EXISTS behavioral_alerts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts           REAL    NOT NULL,
+    severity     TEXT    NOT NULL,
+    category     TEXT    NOT NULL,
+    can_id       INTEGER,
+    signal_name  TEXT,
+    detail       TEXT    NOT NULL,
+    resolved     INTEGER NOT NULL DEFAULT 0,
+    resolved_ts  REAL
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_ts       ON behavioral_alerts(ts);
+CREATE INDEX IF NOT EXISTS idx_alerts_severity ON behavioral_alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_alerts_can_id   ON behavioral_alerts(can_id);
+
+CREATE TABLE IF NOT EXISTS bus_state_log (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts      REAL    NOT NULL,
+    tec     INTEGER NOT NULL,
+    rec     INTEGER NOT NULL,
+    state   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_busstate_ts ON bus_state_log(ts);
+"""
+
+# Retention: frames 7 days, PRU events 30 days, alerts 90 days
+_RETENTION_SQL = """
+DELETE FROM can_frames        WHERE ts < (strftime('%s','now') - 86400 * 7);
+DELETE FROM error_events      WHERE ts < (strftime('%s','now') - 86400 * 7);
+DELETE FROM pru_events        WHERE ts < (strftime('%s','now') - 86400 * 30);
+DELETE FROM behavioral_alerts WHERE ts < (strftime('%s','now') - 86400 * 90);
+DELETE FROM bus_state_log     WHERE ts < (strftime('%s','now') - 86400 * 30);
+"""
+
+_FLUSH_INTERVAL_S  = 0.05   # 20 Hz batch writes
+_RETAIN_INTERVAL_S = 86400  # daily retention purge
+
+
+class DiagLogger:
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self._conn:   Optional[sqlite3.Connection] = None
+        self._frame_buf:  list = []
+        self._error_buf:  list = []
+        self._pru_buf:    list = []
+        self._alert_buf:  list = []
+        self._busst_buf:  list = []
+
+    def open(self) -> None:
+        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        self._conn.executescript(_SCHEMA)
+        self._conn.commit()
+
+    def close(self) -> None:
+        if self._conn:
+            self._flush()
+            self._conn.close()
+            self._conn = None
+
+    # ------------------------------------------------------------------
+
+    def log_frame(self, frame: EnrichedFrame, is_aborted: bool = False) -> None:
+        self._frame_buf.append((
+            frame.kernel_ts,
+            frame.arb_id,
+            int(frame.is_extended),
+            frame.dlc,
+            frame.data,
+            frame.pru_ts_ns,
+            int(is_aborted),
+        ))
+
+    def log_error(self, err: ErrorEvent, bus_state: Optional[str] = None) -> None:
+        self._error_buf.append((
+            err.ts,
+            err.error_class,
+            err.raw_data,
+            err.tec,
+            err.rec,
+            bus_state,
+        ))
+
+    def log_pru_event(self, event: PruEvent, matched: bool = False) -> None:
+        self._pru_buf.append((
+            time.time(),
+            event.type.value,
+            event.t_fall_ns,
+            event.pulse_ns if event.type is not PruEventType.SOF else None,
+            int(matched),
+        ))
+
+    def log_alert(self, alert: Alert) -> None:
+        self._alert_buf.append((
+            alert.ts,
+            alert.severity.value,
+            alert.category.value,
+            alert.can_id,
+            alert.signal_name,
+            alert.msg,
+            int(alert.resolved),
+            alert.resolved_ts,
+        ))
+
+    def log_bus_state(self, tec: int, rec: int, state: str) -> None:
+        self._busst_buf.append((time.time(), tec, rec, state))
+
+    # ------------------------------------------------------------------
+
+    async def run(self) -> None:
+        last_retain = time.time()
+        while True:
+            await asyncio.sleep(_FLUSH_INTERVAL_S)
+            await asyncio.to_thread(self._flush)
+            if time.time() - last_retain > _RETAIN_INTERVAL_S:
+                await asyncio.to_thread(self._purge)
+                last_retain = time.time()
+
+    def _flush(self) -> None:
+        if not self._conn:
+            return
+        with self._conn:
+            if self._frame_buf:
+                self._conn.executemany(
+                    "INSERT INTO can_frames(ts,can_id,is_extended,dlc,data,pru_ts_ns,is_aborted)"
+                    " VALUES(?,?,?,?,?,?,?)", self._frame_buf)
+                self._frame_buf.clear()
+            if self._error_buf:
+                self._conn.executemany(
+                    "INSERT INTO error_events(ts,error_class,error_data,tec,rec,bus_state)"
+                    " VALUES(?,?,?,?,?,?)", self._error_buf)
+                self._error_buf.clear()
+            if self._pru_buf:
+                self._conn.executemany(
+                    "INSERT INTO pru_events(ts,event_type,pru_ts_ns,pulse_ns,matched)"
+                    " VALUES(?,?,?,?,?)", self._pru_buf)
+                self._pru_buf.clear()
+            if self._alert_buf:
+                self._conn.executemany(
+                    "INSERT INTO behavioral_alerts"
+                    "(ts,severity,category,can_id,signal_name,detail,resolved,resolved_ts)"
+                    " VALUES(?,?,?,?,?,?,?,?)", self._alert_buf)
+                self._alert_buf.clear()
+            if self._busst_buf:
+                self._conn.executemany(
+                    "INSERT INTO bus_state_log(ts,tec,rec,state) VALUES(?,?,?,?)",
+                    self._busst_buf)
+                self._busst_buf.clear()
+
+    def _purge(self) -> None:
+        if self._conn:
+            self._conn.executescript(_RETENTION_SQL)
+            self._conn.commit()

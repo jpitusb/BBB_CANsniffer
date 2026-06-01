@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "can-sniffer"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "python-can>=4.3",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+    "websockets>=12",
+    "cantools>=40.0",
+    "aiosqlite>=0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+can-sniffer = "can_sniffer.server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["can_sniffer*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

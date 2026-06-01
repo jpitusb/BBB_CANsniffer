@@ -1,0 +1,16 @@
+[Unit]
+Description=CAN Sniffer Backend
+After=network.target pru-loader.service
+Requires=pru-loader.service
+
+[Service]
+ExecStartPre=/opt/can_sniffer/scripts/setup_can.sh 500000
+ExecStart=/opt/can_sniffer/.venv/bin/uvicorn can_sniffer.server:app \
+    --host 0.0.0.0 --port 8000 --no-access-log
+WorkingDirectory=/opt/can_sniffer/backend
+Restart=on-failure
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

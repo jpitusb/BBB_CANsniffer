@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAN Sniffer</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <div id="status-bar">
+    <span class="title">CAN Sniffer</span>
+    <span id="bus-state-badge" class="badge badge-unknown">UNKNOWN</span>
+    <span id="tec-rec">TEC=— REC=—</span>
+    <span id="err-rate">0 err/s</span>
+    <span id="conn-dot" class="dot disconnected" title="WebSocket"></span>
+  </div>
+</header>
+
+<main>
+  <!-- ── Tab bar ─────────────────────────────────────────────── -->
+  <nav id="tabs">
+    <button class="tab active" data-panel="panel-frames">Frames</button>
+    <button class="tab" data-panel="panel-diag">Diagnostics <span id="alert-badge" class="badge-count hidden">0</span></button>
+    <button class="tab" data-panel="panel-stats">Stats</button>
+  </nav>
+
+  <!-- ── Frames panel ─────────────────────────────────────────── -->
+  <section id="panel-frames" class="panel active">
+    <div class="toolbar">
+      <input id="filter-id" type="text" placeholder="Filter ID (hex)" maxlength="8">
+      <button id="btn-pause">Pause</button>
+      <button id="btn-clear">Clear</button>
+      <span id="bus-load-label">Bus: 0%</span>
+      <div id="bus-load-bar"><div id="bus-load-fill"></div></div>
+    </div>
+    <div class="table-wrap">
+      <table id="frame-table">
+        <thead>
+          <tr>
+            <th>PRU Timestamp (ns)</th>
+            <th>Arb ID</th>
+            <th>DLC</th>
+            <th>Data</th>
+            <th>ΔT (µs)</th>
+          </tr>
+        </thead>
+        <tbody id="frame-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Diagnostics panel ────────────────────────────────────── -->
+  <section id="panel-diag" class="panel">
+    <div class="diag-grid">
+
+      <div class="diag-card" id="card-proto-errors">
+        <h3>Protocol Errors (session)</h3>
+        <table class="diag-table">
+          <tr><td>Bit errors</td>  <td id="cnt-bit">0</td></tr>
+          <tr><td>Stuff errors</td><td id="cnt-stuff">0</td></tr>
+          <tr><td>CRC errors</td>  <td id="cnt-crc">0</td></tr>
+          <tr><td>Form errors</td> <td id="cnt-form">0</td></tr>
+          <tr><td>ACK errors</td>  <td id="cnt-ack">0</td></tr>
+        </table>
+      </div>
+
+      <div class="diag-card" id="card-signal-quality">
+        <h3>Signal Quality (last 1 s)</h3>
+        <table class="diag-table">
+          <tr><td>Glitches</td>       <td id="cnt-glitch">0</td></tr>
+          <tr><td>Aborted frames</td> <td id="cnt-abort">0</td></tr>
+          <tr><td>Dominant runaway</td><td id="runaway-badge" class="badge badge-ok">OK</td></tr>
+        </table>
+      </div>
+
+      <div class="diag-card" id="card-missing">
+        <h3>Missing Periodic Messages</h3>
+        <div id="missing-msgs"><em>None</em></div>
+      </div>
+
+      <div class="diag-card" id="card-alerts">
+        <h3>Active Alerts</h3>
+        <div id="alert-feed"></div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── Stats panel ──────────────────────────────────────────── -->
+  <section id="panel-stats" class="panel">
+    <div class="stats-summary">
+      <div class="stat-box"><div id="stat-total">0</div><label>Total Frames</label></div>
+      <div class="stat-box"><div id="stat-ids">0</div><label>Unique IDs</label></div>
+      <div class="stat-box"><div id="stat-errs">0</div><label>Error Events</label></div>
+      <div class="stat-box"><div id="stat-aborts">0</div><label>Aborted Frames</label></div>
+    </div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

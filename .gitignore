@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Database / logs
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.jsonl
+
+# PRU build artifacts
+pru/**/*.obj
+pru/**/*.map
+pru/**/am335x-pru*.fw
+
+# Device tree build artifacts
+dts/*.dtbo
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/

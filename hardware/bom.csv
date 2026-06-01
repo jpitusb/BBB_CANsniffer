@@ -1,0 +1,10 @@
+Qty,Part,Description,Approx_USD
+1,BeagleBone Black Rev C,Main compute board (AM335x SoC + 2x PRU + 2x DCAN),55.00
+1,SN65HVD230 module,3.3V CAN transceiver (preferred over TJA1050),3.00
+1,MicroSD 8GB Class 10,Debian Bullseye IoT image,8.00
+1,5V/2A power supply,USB or barrel-jack BBB power,8.00
+1,DB9 female connector,CAN bus physical interface,2.00
+2,120R 1/4W resistor,Bus termination (one per bus end),0.50
+1,4.7k resistor,SN65HVD230 RS pin to GND (high-speed mode),0.10
+1,Small breadboard,Transceiver wiring,3.00
+4,Jumper wires M-F,BBB P9/P8 header to breadboard,1.00

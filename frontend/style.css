@@ -1,0 +1,240 @@
+:root {
+  --bg:        #1a1a1e;
+  --surface:   #26262c;
+  --border:    #3a3a42;
+  --text:      #e0e0e8;
+  --text-dim:  #888890;
+  --accent:    #5b9bd5;
+  --ok:        #4caf7d;
+  --warn:      #e8a838;
+  --critical:  #e05555;
+  --info:      #888890;
+  --font-mono: "Fira Mono", "Consolas", monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Header ──────────────────────────────────────────────── */
+header { background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+
+#status-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 16px;
+}
+
+.title { font-weight: bold; color: var(--accent); margin-right: 8px; }
+
+.dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.dot.connected    { background: var(--ok); }
+.dot.disconnected { background: var(--critical); }
+
+/* ── Badge ───────────────────────────────────────────────── */
+.badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: bold;
+}
+.badge-unknown  { background: #555; color: #aaa; }
+.badge-active   { background: #2a5c3a; color: var(--ok); }
+.badge-warning  { background: #4a3a10; color: var(--warn); }
+.badge-passive  { background: #5a2020; color: var(--critical); }
+.badge-busoff   { background: var(--critical); color: #fff; animation: blink 0.5s step-end infinite; }
+.badge-ok       { background: #2a5c3a; color: var(--ok); }
+.badge-count    { background: var(--critical); color: #fff; border-radius: 10px;
+                  padding: 1px 6px; font-size: 10px; vertical-align: top; margin-left: 4px; }
+.hidden         { display: none; }
+
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ── Tabs ────────────────────────────────────────────────── */
+#tabs {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 8px 18px;
+}
+.tab:hover  { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ── Panels ─────────────────────────────────────────────── */
+main { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+.panel { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+.panel.active { display: flex; }
+
+/* ── Frames panel ────────────────────────────────────────── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.toolbar input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 4px 8px;
+  width: 150px;
+  border-radius: 3px;
+}
+
+.toolbar button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 4px 10px;
+}
+.toolbar button:hover    { border-color: var(--accent); }
+.toolbar button.paused   { color: var(--warn); border-color: var(--warn); }
+
+#bus-load-bar {
+  height: 14px; width: 120px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+#bus-load-fill {
+  height: 100%;
+  background: var(--ok);
+  transition: width 0.1s, background 0.3s;
+  width: 0%;
+}
+
+.table-wrap { flex: 1; overflow-y: auto; }
+
+#frame-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+#frame-table th {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-weight: normal;
+  padding: 5px 10px;
+  position: sticky;
+  top: 0;
+  text-align: left;
+}
+#frame-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+#frame-table tr:hover td { background: var(--surface); }
+
+/* ── Diagnostics panel ───────────────────────────────────── */
+.diag-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 1px;
+  flex: 1;
+  overflow: hidden;
+  background: var(--border);
+}
+
+.diag-card {
+  background: var(--bg);
+  padding: 12px 16px;
+  overflow-y: auto;
+}
+.diag-card h3 {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: normal;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
+.diag-table { width: 100%; border-collapse: collapse; }
+.diag-table td { padding: 3px 0; }
+.diag-table td:last-child { text-align: right; color: var(--accent); }
+
+/* Alerts */
+.alert-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+.sev-badge {
+  font-size: 10px;
+  font-weight: bold;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.sev-CRITICAL { background: var(--critical); color: #fff; }
+.sev-WARN     { background: #5a3a10; color: var(--warn); }
+.sev-INFO     { background: #333; color: var(--text-dim); }
+
+.alert-msg  { flex: 1; }
+.alert-ts   { color: var(--text-dim); font-size: 11px; flex-shrink: 0; }
+
+/* Missing messages */
+.missing-row {
+  display: flex;
+  gap: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+.missing-name { flex: 1; }
+.missing-overdue { color: var(--warn); }
+
+/* ── Stats panel ─────────────────────────────────────────── */
+.stats-summary {
+  display: flex;
+  gap: 1px;
+  padding: 20px;
+  background: var(--border);
+}
+.stat-box {
+  background: var(--bg);
+  flex: 1;
+  padding: 20px;
+  text-align: center;
+}
+.stat-box div  { font-size: 32px; color: var(--accent); }
+.stat-box label { color: var(--text-dim); font-size: 11px; text-transform: uppercase; }

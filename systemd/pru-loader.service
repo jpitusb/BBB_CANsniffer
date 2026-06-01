@@ -1,0 +1,14 @@
+[Unit]
+Description=Load PRU0 CAN timestamp firmware
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '\
+    echo stop  > /sys/class/remoteproc/remoteproc1/state 2>/dev/null || true; \
+    cp /opt/can_sniffer/pru/pru0_timestamp/am335x-pru0-fw /lib/firmware/; \
+    echo start > /sys/class/remoteproc/remoteproc1/state'
+
+[Install]
+WantedBy=multi-user.target
