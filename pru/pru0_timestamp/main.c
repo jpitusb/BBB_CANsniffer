@@ -63,7 +63,7 @@ static inline void ocp_enable(void)
  * L3/EMIF slow-path.  On AM335x this is safe but adds ~100 ns per write;
  * acceptable because we write at most once per CAN frame (~25 µs at 500 kbit/s).
  */
-static volatile pru_shm_t *const shm = (pru_shm_t *)PRU_SHM_ARM_ADDR;
+static volatile pru_shm_t *const shm = (pru_shm_t *)PRU_SHM_PRU_ADDR;
 
 /* IEP rollover tracking — updated in iep_to_ns() below */
 static uint32_t _prev_iep = 0;
@@ -116,12 +116,13 @@ void main(void)
 
     ocp_enable();
 
+    /* Write magic early so we can verify shared memory access even if IEP stalls */
+    shm->magic     = PRU_SHM_MAGIC;
+    shm->write_idx = 0;
+
     /* Enable IEP global counter (bit 0 of TMR_GLB_CFG) */
     IEP_TMR_GLB_CFG |= 1u;
     IEP_TMR_CNT = 0;
-
-    shm->magic     = PRU_SHM_MAGIC;
-    shm->write_idx = 0;
 
     while (1) {
         /* IDLE: spin until CAN RX goes dominant (low) */
