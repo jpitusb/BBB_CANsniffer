@@ -29,6 +29,14 @@ register uint32_t __R30 __asm__("r30");
 register uint32_t __R31 __asm__("r31");
 
 /*
+ * PRUSS CFG SYSCFG register (Constant Table C4 = 0x00026000, offset 0x04).
+ * Bit 4 = STANDBY_INIT: clear to enable the OCP master port so the PRU
+ * can access DDR and other ARM-side memory.  Must be done before any
+ * access to addresses outside the PRUSS subsystem (e.g. 0x9F000000).
+ */
+#define PRU_CFG_SYSCFG   (*(volatile uint32_t *)0x00026004u)
+
+/*
  * IEP registers via PRU local address (Constant Table C26 = 0x0002e000).
  * pru_iep.h from ti-pru-software-v6.3 uses cregister pragmas which are
  * clpru-only, so we access the registers directly.
@@ -92,6 +100,9 @@ void main(void)
     uint32_t pulse_counts;
     uint16_t seq = 0;
     uint32_t stability;
+
+    /* Enable OCP master port so PRU can write to DDR (0x9F000000) */
+    PRU_CFG_SYSCFG &= ~(1u << 4);
 
     /* Enable IEP global counter (bit 0 of TMR_GLB_CFG) */
     IEP_TMR_GLB_CFG |= 1u;
