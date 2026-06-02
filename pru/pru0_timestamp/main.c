@@ -63,7 +63,7 @@ static inline void ocp_enable(void)
  * L3/EMIF slow-path.  On AM335x this is safe but adds ~100 ns per write;
  * acceptable because we write at most once per CAN frame (~25 µs at 500 kbit/s).
  */
-static volatile pru_shm_t *const shm = (pru_shm_t *)PRU_SHM_PHYS_ADDR;
+static volatile pru_shm_t *const shm = (pru_shm_t *)PRU_SHM_PRU_ADDR;
 
 /* IEP rollover tracking — updated in iep_to_ns() below */
 static uint32_t _prev_iep = 0;
