@@ -6,7 +6,7 @@
  *   DMEM  8 KB  data RAM (PRU0 local)
  */
 
-ENTRY(main)
+ENTRY(_start)
 
 MEMORY
 {
@@ -16,7 +16,10 @@ MEMORY
 
 SECTIONS
 {
-    .text           : { *(.text*) }  > PRUIMEM
+    .text : {
+        *(.text._start)   /* startup must be first: sets sp before main */
+        *(.text*)
+    } > PRUIMEM
 
     .resource_table : { *(.resource_table) } > PRUDMEM
     .rodata         : { *(.rodata*) } > PRUDMEM
