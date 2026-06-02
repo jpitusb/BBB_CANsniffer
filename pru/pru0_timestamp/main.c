@@ -49,13 +49,14 @@ static inline void ocp_enable(void)
 }
 
 /*
- * IEP registers via PRU local address (Constant Table C26 = 0x0002e000).
- * pru_iep.h from ti-pru-software-v6.3 uses cregister pragmas which are
- * clpru-only, so we access the registers directly.
- * AM335x TRM: IEP base 0x4802e000 → PRU local 0x0002e000 via CT26.
+ * IEP registers via ARM physical address (gcc-pru uses LBBO/SBBO which
+ * address the ARM physical bus, not the PRU constant table space).
+ * AM335x TRM: PRUSS base 0x4A300000, IEP offset 0x2E000.
+ * Note: 0x0002E000 is the constant-table (C26) offset used by clpru's
+ * LBCO/SBCO — do NOT use that address here with gcc-pru + LBBO/SBBO.
  */
-#define IEP_TMR_GLB_CFG  (*(volatile uint32_t *)0x0002e000u)
-#define IEP_TMR_CNT      (*(volatile uint32_t *)0x0002e00cu)
+#define IEP_TMR_GLB_CFG  (*(volatile uint32_t *)0x4a32e000u)
+#define IEP_TMR_CNT      (*(volatile uint32_t *)0x4a32e00cu)
 
 /*
  * The DDR carveout physical address is accessed directly from PRU via the
