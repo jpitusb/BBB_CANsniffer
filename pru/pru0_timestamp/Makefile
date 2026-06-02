@@ -11,7 +11,6 @@ CFLAGS  = -Os -mmcu=am335x.pru0 \
           -Wall -Wno-incompatible-pointer-types
 
 LFLAGS  = -mmcu=am335x.pru0 \
-          -nostartfiles \
           -T$(LINKER_CMD)
 
 all: $(TARGET)

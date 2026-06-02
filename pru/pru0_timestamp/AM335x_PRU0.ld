@@ -21,5 +21,6 @@ SECTIONS
     .resource_table : { *(.resource_table) } > PRUDMEM
     .rodata         : { *(.rodata*) } > PRUDMEM
     .data           : { *(.data*) }  > PRUDMEM
-    .bss  (NOLOAD)  : { *(.bss*) *(COMMON) } > PRUDMEM
+    .bss   (NOLOAD) : { *(.bss*) *(COMMON) } > PRUDMEM
+    .stack (NOLOAD) : { *(.stack) } > PRUDMEM
 }
