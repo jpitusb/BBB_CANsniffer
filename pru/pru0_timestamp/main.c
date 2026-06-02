@@ -14,8 +14,6 @@
  */
 
 #include <stdint.h>
-#include <pru_iep.h>
-#include <pru_cfg.h>
 
 #include "shared_mem.h"
 #include "resource_table.h"
@@ -23,8 +21,21 @@
 /* PRU0 R31 bit 0 = P8.45 (pr1_pru0_pru_r31_0) */
 #define CAN_RX_BIT  (1u << 0)
 
-volatile register uint32_t __R30;
-volatile register uint32_t __R31;
+/*
+ * gcc-pru named register variables for the PRU I/O ports.
+ * R30 = output, R31 = input (GPI).
+ */
+register uint32_t __R30 __asm__("r30");
+register uint32_t __R31 __asm__("r31");
+
+/*
+ * IEP registers via PRU local address (Constant Table C26 = 0x0002e000).
+ * pru_iep.h from ti-pru-software-v6.3 uses cregister pragmas which are
+ * clpru-only, so we access the registers directly.
+ * AM335x TRM: IEP base 0x4802e000 → PRU local 0x0002e000 via CT26.
+ */
+#define IEP_TMR_GLB_CFG  (*(volatile uint32_t *)0x0002e000u)
+#define IEP_TMR_CNT      (*(volatile uint32_t *)0x0002e00cu)
 
 /*
  * The DDR carveout physical address is accessed directly from PRU via the
@@ -42,7 +53,7 @@ static uint64_t _rollover_ns = 0;
 
 static inline uint32_t iep_read(void)
 {
-    return CT_IEP.TMR_CNT;
+    return IEP_TMR_CNT;
 }
 
 /*
@@ -82,9 +93,9 @@ void main(void)
     uint16_t seq = 0;
     uint32_t stability;
 
-    /* Enable IEP global counter */
-    CT_IEP.TMR_GLB_CFG_bit.CNT_ENABLE = 1;
-    CT_IEP.TMR_CNT = 0;
+    /* Enable IEP global counter (bit 0 of TMR_GLB_CFG) */
+    IEP_TMR_GLB_CFG |= 1u;
+    IEP_TMR_CNT = 0;
 
     shm->magic     = PRU_SHM_MAGIC;
     shm->write_idx = 0;

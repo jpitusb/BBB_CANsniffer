@@ -18,8 +18,7 @@ struct pru0_resource_table {
     struct fw_rsc_carveout carveout;
 };
 
-#pragma DATA_SECTION(pru_remoteproc_ResourceTable, ".resource_table")
-#pragma RETAIN(pru_remoteproc_ResourceTable)
+__attribute__((section(".resource_table"), used))
 const struct pru0_resource_table pru_remoteproc_ResourceTable = {
     .base = {
         .ver      = 1,

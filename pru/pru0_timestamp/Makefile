@@ -1,33 +1,30 @@
 TARGET     = am335x-pru0-fw
 SRCS       = main.c
-PRUSS_SDK  ?= /usr/lib/ti/pru-software-support-package
-CLPRU      ?= clpru
-LNKPRU     ?= lnkpru
-LINKER_CMD  = $(PRUSS_SDK)/examples/am335x/PRU_RPMsg_Echo_Interrupt0/AM335x_PRU.cmd
+PRUSS_SDK  ?= /usr/lib/ti/pru-software-support-package-v6.3
+PRU_GCC    ?= pru-gcc
+LINKER_CMD  = AM335x_PRU0.ld
 
-CFLAGS  = -v3 -O2 --endian=little --hardware_mac=on \
+CFLAGS  = -Os -mmcu=am335x.pru0 \
           -I$(PRUSS_SDK)/include \
           -I$(PRUSS_SDK)/include/am335x \
-          -DCORE_0
+          -DCORE_0 \
+          -Wall -Wno-incompatible-pointer-types
 
-LFLAGS  = -i$(PRUSS_SDK)/lib \
-          -llibc.a
+LFLAGS  = -mmcu=am335x.pru0 \
+          -nostartfiles \
+          -T$(LINKER_CMD)
 
 all: $(TARGET)
 
-$(TARGET): $(SRCS:.c=.obj)
-	$(LNKPRU) $(LFLAGS) -o $@ $^ $(LINKER_CMD)
-
-%.obj: %.c
-	$(CLPRU) $(CFLAGS) -c $< -o $@
+$(TARGET): $(SRCS) $(LINKER_CMD)
+	$(PRU_GCC) $(CFLAGS) $(LFLAGS) -o $@ $(SRCS)
 
 deploy: $(TARGET)
-	scp $(TARGET) $(BBB_USER)@$(BBB_HOST):/lib/firmware/$(TARGET)
-	ssh $(BBB_USER)@$(BBB_HOST) \
-	    "echo stop > /sys/class/remoteproc/remoteproc1/state; \
-	     echo start > /sys/class/remoteproc/remoteproc1/state"
+	sudo cp $(TARGET) /lib/firmware/$(TARGET)
+	echo stop | sudo tee /sys/class/remoteproc/remoteproc1/state || true
+	echo start | sudo tee /sys/class/remoteproc/remoteproc1/state
 
 clean:
-	rm -f *.obj *.map $(TARGET)
+	rm -f $(TARGET)
 
 .PHONY: all deploy clean
