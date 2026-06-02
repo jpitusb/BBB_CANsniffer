@@ -19,7 +19,9 @@ ENTRY(_start)
 MEMORY
 {
     PRUIMEM (X)  : ORIGIN = 0x00000000, LENGTH = 0x00002000
-    PRUDMEM (RW) : ORIGIN = 0x00000000, LENGTH = 0x00002000
+    /* OCMC0 SRAM: external to PRUSS, writable via SBBO (OCP, no self-targeting).
+     * Stack, BSS, and ring buffer all live here.  Size capped at 8 KB. */
+    PRUDMEM (RW) : ORIGIN = 0x40300000, LENGTH = 0x00002000
 }
 
 SECTIONS

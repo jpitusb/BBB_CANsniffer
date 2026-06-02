@@ -49,21 +49,43 @@ static inline void ocp_enable(void)
 }
 
 /*
- * IEP registers via ARM physical address (gcc-pru uses LBBO/SBBO which
- * address the ARM physical bus, not the PRU constant table space).
- * AM335x TRM: PRUSS base 0x4A300000, IEP offset 0x2E000.
- * Note: 0x0002E000 is the constant-table (C26) offset used by clpru's
- * LBCO/SBCO — do NOT use that address here with gcc-pru + LBBO/SBBO.
+ * IEP access via constant table C26 (PRUSS IEP, internal routing).
+ * SBBO/LBBO to 0x4A32E000 would use OCP self-targeting (blocked).
+ * LBCO/SBCO via C26 uses the PRUSS internal bus — always accessible.
+ *
+ * IEP register offsets from its base: TMR_GLB_CFG=0x00, TMR_CNT=0x0C
  */
-#define IEP_TMR_GLB_CFG  (*(volatile uint32_t *)0x4a32e000u)
-#define IEP_TMR_CNT      (*(volatile uint32_t *)0x4a32e00cu)
+static inline void iep_enable_and_reset(void)
+{
+    __asm__ volatile (
+        "lbco r0, 26, 0x00, 4 \n"  /* read TMR_GLB_CFG */
+        "set  r0, r0, 0        \n"  /* set CNT_ENABLE (bit 0) */
+        "sbco r0, 26, 0x00, 4 \n"  /* write TMR_GLB_CFG */
+        "ldi  r0, 0            \n"
+        "sbco r0, 26, 0x0C, 4 \n"  /* reset TMR_CNT = 0 */
+        ::: "r0"
+    );
+}
+
+static inline uint32_t iep_cnt_read(void)
+{
+    uint32_t cnt;
+    __asm__ volatile (
+        "lbco r0, 26, 0x0C, 4 \n"
+        "mov  %0, r0           \n"
+        : "=r" (cnt)
+        :
+        : "r0"
+    );
+    return cnt;
+}
 
 /*
  * The DDR carveout physical address is accessed directly from PRU via the
  * L3/EMIF slow-path.  On AM335x this is safe but adds ~100 ns per write;
  * acceptable because we write at most once per CAN frame (~25 µs at 500 kbit/s).
  */
-static volatile pru_shm_t *const shm = (pru_shm_t *)PRU_SHM_PRU_ADDR;
+static volatile pru_shm_t *const shm = (pru_shm_t *)PRU_SHM_ARM_ADDR;
 
 /* IEP rollover tracking — updated in iep_to_ns() below */
 static uint32_t _prev_iep = 0;
@@ -74,7 +96,7 @@ static uint64_t _rollover_ns = 0;
 
 static inline uint32_t iep_read(void)
 {
-    return IEP_TMR_CNT;
+    return iep_cnt_read();
 }
 
 /*
@@ -116,13 +138,11 @@ void main(void)
 
     ocp_enable();
 
-    /* Write magic early so we can verify shared memory access even if IEP stalls */
+    /* Enable IEP and reset counter via constant table C26 (internal routing) */
+    iep_enable_and_reset();
+
     shm->magic     = PRU_SHM_MAGIC;
     shm->write_idx = 0;
-
-    /* Enable IEP global counter (bit 0 of TMR_GLB_CFG) */
-    IEP_TMR_GLB_CFG |= 1u;
-    IEP_TMR_CNT = 0;
 
     while (1) {
         /* IDLE: spin until CAN RX goes dominant (low) */

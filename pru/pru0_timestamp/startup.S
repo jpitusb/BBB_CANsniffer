@@ -21,5 +21,7 @@ _start:
 	 * addresses, so sp must be in PRU DRAM's ARM range (0x4A300000-0x4A301FFF).
 	 * LDI only handles 16-bit immediates; load the two halves separately.
 	 */
-	ldi	r2, 0x1E00	/* sp = 0x00001E00 (top of PRU DRAM, PRUSS-internal routing) */
+	/* sp = 0x40301E00 (top of OCMC0 SRAM window, writable via OCP) */
+	ldi	r2.w2, 0x4030
+	ldi	r2.w0, 0x1E00
 	jmp	main
