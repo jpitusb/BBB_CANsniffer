@@ -19,14 +19,13 @@
  * Our struct is ~4 KB; 12 KB shared RAM is sufficient.
  */
 /*
- * Ring buffer in OCMC0 SRAM (ARM physical 0x40300000).
- * SBBO/LBBO uses ARM physical addresses on the L3 bus.
- * PRUSS self-targeting (0x4A300000-0x4A33FFFF) is blocked.
- * OCMC0 is external to PRUSS, writable via OCP master with no
- * self-targeting issue, and readable from ARM via /dev/mem.
+ * Ring buffer in DDR at 0x9F000000 (reserved via DTS, no no-map).
+ * SBBO uses ARM physical addresses — DDR is external to PRUSS so
+ * there is no OCP self-targeting issue.  ARM accesses via /dev/mem
+ * (MAP_SHARED writable, since no-map is absent).
  */
-#define PRU_SHM_ARM_ADDR     0x40300000U    /* OCMC0 SRAM, both PRU and ARM */
-#define PRU_SHM_SIZE         0x2000U        /* 8 KB (ring buffer fits ~4 KB) */
+#define PRU_SHM_ARM_ADDR     0x9F000000U
+#define PRU_SHM_SIZE         0x2000U        /* 8 KB */
 
 /* PRU event types — also used in Python as PruEventType enum */
 #define EVT_SOF              0x01

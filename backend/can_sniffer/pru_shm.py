@@ -7,7 +7,7 @@ from typing import Iterator
 
 from .models import PruEvent, PruEventType
 
-PRU_SHM_PHYS_ADDR = 0x40300000    # OCMC0 SRAM — PRU writes via SBBO (OCP, non-PRUSS)
+PRU_SHM_PHYS_ADDR = 0x9F000000    # DDR reserved (no no-map) — PRU writes via OCP, ARM via /dev/mem
 PRU_SHM_SIZE      = 0x2000        # 8 KB
 PRU_SHM_MAGIC     = 0xCAFE1234
 PRU_RING_DEPTH    = 256

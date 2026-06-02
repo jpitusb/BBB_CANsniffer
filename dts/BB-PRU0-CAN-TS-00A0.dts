@@ -25,4 +25,25 @@
             /delete-property/ pinctrl-0;
         };
     };
+
+    /*
+     * Reserve 8 KB of DDR at 0x9F000000 for the PRU ring buffer.
+     * No "no-map": allows normal ARM /dev/mem mmap (read+write).
+     * The PRU writes here via SBBO with OCP master enabled; this is
+     * external DDR — no PRUSS self-targeting issue.
+     */
+    fragment@1 {
+        target-path = "/";
+        __overlay__ {
+            reserved-memory {
+                #address-cells = <1>;
+                #size-cells = <1>;
+                ranges;
+
+                pru_shm: pru_shm@9f000000 {
+                    reg = <0x9f000000 0x2000>;
+                };
+            };
+        };
+    };
 };
