@@ -39,10 +39,11 @@ register uint32_t __R31 __asm__("r31");
  */
 static inline void ocp_enable(void)
 {
+    /* Constant table entry index 4 (C4) = PRUSS_CFG base; SYSCFG at offset 4 */
     __asm__ volatile (
-        "lbco r0, c4, 4, 4 \n\t"   /* read SYSCFG */
-        "clr  r0, r0, 4    \n\t"   /* clear STANDBY_INIT */
-        "sbco r0, c4, 4, 4 \n\t"   /* write back */
+        "lbco r0, 4, 4, 4 \n"   /* read SYSCFG */
+        "clr  r0, r0, 4   \n"   /* clear STANDBY_INIT (bit 4) */
+        "sbco r0, 4, 4, 4 \n"   /* write back */
         ::: "r0"
     );
 }
