@@ -5,8 +5,16 @@
 
 #define PRU_SHM_MAGIC        0xCAFE1234U
 #define PRU_RING_DEPTH       256U           /* must be a power of 2 */
-#define PRU_SHM_PHYS_ADDR    0x9F000000U
-#define PRU_SHM_SIZE         0x2000U        /* 8 KB carveout */
+
+/*
+ * Use PRUSS Shared RAM (12 KB at ARM physical 0x4A310000).
+ * - PRU accesses it via local bus at data address 0x00010000 (no OCP needed)
+ * - ARM accesses it via /dev/mem as a non-cached I/O region — no cache
+ *   coherency issues and no DTS reservation required.
+ * Our struct is ~4 KB; 12 KB shared RAM is sufficient.
+ */
+#define PRU_SHM_PHYS_ADDR    0x4A310000U
+#define PRU_SHM_SIZE         0x3000U        /* 12 KB PRUSS shared RAM */
 
 /* PRU event types — also used in Python as PruEventType enum */
 #define EVT_SOF              0x01

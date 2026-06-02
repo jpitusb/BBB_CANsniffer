@@ -14,34 +14,15 @@
      * it so the PRUSS can probe cleanly.  P8.45 is configured at runtime:
      *   config-pin P8.45 pruin
      * which selects the pre-built P8_45_pruin_pin state (mode 6 = pr1_pru0_pru_r31_0).
+     *
+     * Shared memory uses PRUSS Shared RAM (0x4A310000, 12 KB) — no DDR
+     * carveout reservation needed.
      */
     fragment@0 {
         target = <&pruss>;
         __overlay__ {
             /delete-property/ pinctrl-names;
             /delete-property/ pinctrl-0;
-        };
-    };
-
-    /*
-     * Reserve 8 KB of DDR at 0x9F000000 for pru_shm_t.
-     * no-map prevents the kernel from using this memory and suppresses
-     * speculative cache prefetches; the PRU writes here directly without
-     * going through the ARM cache subsystem.
-     */
-    fragment@1 {
-        target-path = "/";
-        __overlay__ {
-            reserved-memory {
-                #address-cells = <1>;
-                #size-cells = <1>;
-                ranges;
-
-                pru_shm: pru_shm@9f000000 {
-                    reg = <0x9f000000 0x2000>;
-                    no-map;
-                };
-            };
         };
     };
 };
