@@ -1,48 +1,35 @@
 /dts-v1/;
 /plugin/;
 
-#include <dt-bindings/board/am335x-bbw-bbb-base.h>
-#include <dt-bindings/pinctrl/am33xx.h>
-
 / {
     compatible = "ti,beaglebone", "ti,beaglebone-black";
     part-number = "BB-PRU0-CAN-TS";
     version = "00A0";
 
-    exclusive-use = "P8.45", "pruss", "pru0";
+    exclusive-use = "pruss";
 
+    /*
+     * The base BBB DTB assigns a pinctrl to the PRUSS node that conflicts
+     * with ocp:P8_45_pinmux (which owns P8.45 in the base DTB).  Remove
+     * it so the PRUSS can probe cleanly.  P8.45 is configured at runtime:
+     *   config-pin P8.45 pruin
+     * which selects the pre-built P8_45_pruin_pin state (mode 6 = pr1_pru0_pru_r31_0).
+     */
     fragment@0 {
-        target = <&am33xx_pinmux>;
-        __overlay__ {
-            bb_pru0_can_ts_pins: pinmux_bb_pru0_can_ts_pins {
-                pinctrl-single,pins = <
-                    /*
-                     * P8.45  ball R1  LCD_DATA0 → pr1_pru0_pru_r31_0  mode 6
-                     * Input, no pull (bus termination provides bias).
-                     * Y-wired to DCAN0_RX (P9.24) on the breadboard.
-                     */
-                    BONE_P8_45 (PIN_INPUT | MUX_MODE6)
-                >;
-            };
-        };
-    };
-
-    fragment@1 {
         target = <&pruss>;
         __overlay__ {
-            status = "okay";
-            pinctrl-names = "default";
-            pinctrl-0 = <&bb_pru0_can_ts_pins>;
+            /delete-property/ pinctrl-names;
+            /delete-property/ pinctrl-0;
         };
     };
 
     /*
      * Reserve 8 KB of DDR at 0x9F000000 for pru_shm_t.
-     * no-map prevents the kernel from using this memory for anything else and
-     * also prevents speculative caching; the PRU writes here directly without
+     * no-map prevents the kernel from using this memory and suppresses
+     * speculative cache prefetches; the PRU writes here directly without
      * going through the ARM cache subsystem.
      */
-    fragment@2 {
+    fragment@1 {
         target-path = "/";
         __overlay__ {
             reserved-memory {
