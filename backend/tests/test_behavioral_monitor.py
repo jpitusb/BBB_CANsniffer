@@ -23,7 +23,7 @@ BS_:
 
 BU_:
 
-BO_ 0x100 EngineStatus: 8 Vector__XXX
+BO_ 256 EngineStatus: 8 Vector__XXX
  SG_ EngineSpeed : 0|16@1+ (0.25,0) [0|8000] "rpm" Vector__XXX
  SG_ Throttle    : 16|8@1+ (0.4,0) [0|100] "%" Vector__XXX
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import deque
 from threading import Lock
 from typing import Optional
@@ -44,6 +45,19 @@ class Correlator:
 
     def drain_matched(self) -> list[EnrichedFrame]:
         with self._lock:
+            # Flush CAN frames that are older than max_delta_ns and have no
+            # matching PRU SOF left in the queue.  This prevents frames from
+            # accumulating when the PRU is not running or a glitch discards
+            # the only pending SOF.
+            now_ns = time.time_ns()
+            while self._can_q:
+                msg = self._can_q[0]
+                age_ns = now_ns - int(msg.timestamp * 1_000_000_000)
+                if age_ns > self._max_delta_ns:
+                    self._can_q.popleft()
+                    self._matched.append(self._enrich(msg, None))
+                else:
+                    break
             result = list(self._matched)
             self._matched.clear()
             return result
