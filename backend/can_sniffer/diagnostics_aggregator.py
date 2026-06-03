@@ -11,6 +11,7 @@ from .error_decoder import ErrorDecoder
 from .models import (
     Alert,
     AlertCategory,
+    AlertSeverity,
     BusState,
     EnrichedFrame,
     ErrorEvent,
@@ -76,7 +77,7 @@ class DiagnosticsAggregator:
         if len(self._err_ts) >= _ERR_BURST_THRESHOLD:
             self._submit(Alert(
                 alert_id = Alert.make_id(AlertCategory.REPEATED_ERROR_FRAMES, None, None),
-                severity = __import__("can_sniffer.models", fromlist=["AlertSeverity"]).AlertSeverity.WARN,
+                severity = AlertSeverity.WARN,
                 category = AlertCategory.REPEATED_ERROR_FRAMES,
                 msg      = f"{len(self._err_ts)} error frames in last 1 s",
                 ts       = now,
@@ -84,7 +85,7 @@ class DiagnosticsAggregator:
         if err.bus_off:
             self._submit(Alert(
                 alert_id = Alert.make_id(AlertCategory.BUS_OFF, None, None),
-                severity = __import__("can_sniffer.models", fromlist=["AlertSeverity"]).AlertSeverity.CRITICAL,
+                severity = AlertSeverity.CRITICAL,
                 category = AlertCategory.BUS_OFF,
                 msg      = "CAN controller entered bus-off state",
                 ts       = now,
