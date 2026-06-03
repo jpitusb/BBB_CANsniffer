@@ -1,6 +1,6 @@
 [Unit]
 Description=PRU0 CAN timestamp firmware — configure pins, enable OCP, load firmware
-After=local-fs.target
+After=sysinit.target
 Before=can-sniffer.service
 
 [Service]

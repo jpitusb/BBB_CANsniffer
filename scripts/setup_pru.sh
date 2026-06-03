@@ -18,7 +18,16 @@ set -e
 
 REMOTEPROC=/sys/class/remoteproc/remoteproc1
 PINMUX=/sys/devices/platform/ocp/ocp:P8_45_pinmux
-PRUSS_CFG_SYSCFG=/sys/bus/platform/devices/4a326000.cfg/...  # not used; we use python
+
+# Wait for remoteproc1 to appear (PRUSS overlay loads after udev settles)
+TIMEOUT=60
+until [ -f "${REMOTEPROC}/state" ] || [ $TIMEOUT -le 0 ]; do
+    sleep 1; TIMEOUT=$((TIMEOUT-1))
+done
+if [ ! -f "${REMOTEPROC}/state" ]; then
+    echo "ERROR: remoteproc1 never appeared — PRUSS overlay may not have loaded" >&2
+    exit 1
+fi
 
 # 1. P8.45 → PRU input mode
 if [ -f "${PINMUX}/state" ]; then
