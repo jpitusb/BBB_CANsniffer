@@ -65,10 +65,10 @@ class DiagnosticsAggregator:
         self._sqm.ingest_abort(evt)
         self._flush_alerts()
 
-    def ingest_error_frame(self, msg: can.Message) -> None:
+    def ingest_error_frame(self, msg: can.Message) -> Optional[ErrorEvent]:
         err = self._decoder.decode(msg)
         if err is None:
-            return
+            return None
         self._update_proto_counts(err)
         self._update_bus_state_from_error(err)
         now = time.time()
@@ -90,6 +90,7 @@ class DiagnosticsAggregator:
                 msg      = "CAN controller entered bus-off state",
                 ts       = now,
             ))
+        return err
 
     def ingest_frame(self, frame: EnrichedFrame) -> None:
         if self._behav:

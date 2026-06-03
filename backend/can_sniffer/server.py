@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -13,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .bus_load import BusLoadMonitor
 from .correlator import Correlator
+from .diag_logger import DiagLogger
 from .diagnostics_aggregator import DiagnosticsAggregator
 from .frame_store import FrameStore
 from .partial_frame_detector import PartialFrameDetector
@@ -23,21 +25,28 @@ from .tec_rec_poller import TecRecPoller
 FRONTEND_DIR      = Path(__file__).parent.parent.parent / "frontend"
 UPDATE_INTERVAL_S = 0.05   # 20 Hz
 TIMEOUT_CHECK_S   = 0.05   # how often to run behavioral timeout scan
+DB_PATH           = Path(os.environ.get("CAN_SNIFFER_DB",
+                         "/opt/can_sniffer/data/diagnostics.db"))
 
 # Module-level singletons — initialised in lifespan, used by WS handler
 _frame_store:    FrameStore
 _bus_load:       BusLoadMonitor
 _diag:           DiagnosticsAggregator
+_logger:         DiagLogger
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global _frame_store, _bus_load, _diag
+    global _frame_store, _bus_load, _diag, _logger
 
     _frame_store = FrameStore(maxlen=1000)
     _bus_load    = BusLoadMonitor()
     tec_rec      = TecRecPoller()
     _diag        = DiagnosticsAggregator(tec_rec_poller=tec_rec)
+
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _logger = DiagLogger(DB_PATH)
+    _logger.open()
 
     pru        = PruShm()
     correlator = Correlator(epoch_offset_ns=pru.epoch_offset_ns)
@@ -53,6 +62,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         asyncio.create_task(pfd.run()),
         asyncio.create_task(tec_rec.run()),
         asyncio.create_task(_timeout_loop()),
+        asyncio.create_task(_logger.run()),
     ]
     try:
         yield
@@ -61,6 +71,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             t.cancel()
         pru.close()
         reader.close()
+        _logger.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -101,6 +112,7 @@ async def _pru_reader_loop(pru: PruShm, correlator: Correlator,
             correlator.ingest_pru(event)
             pfd.ingest_pru(event)
             _diag.ingest_pru_event(event)
+            _logger.log_pru_event(event)
         await asyncio.sleep(0.001)
 
 
@@ -109,7 +121,9 @@ async def _can_reader_loop(reader: SocketCanReader, correlator: Correlator) -> N
         msg = await asyncio.to_thread(reader.recv_one)
         if msg is not None:
             if msg.is_error_frame:
-                _diag.ingest_error_frame(msg)
+                err = _diag.ingest_error_frame(msg)
+                if err is not None:
+                    _logger.log_error(err)
             else:
                 correlator.ingest_frame(msg)
 
@@ -120,6 +134,7 @@ async def _drain_loop(correlator: Correlator) -> None:
             _frame_store.append(frame)
             _bus_load.record(frame)
             _diag.ingest_frame(frame)
+            _logger.log_frame(frame)
         await asyncio.sleep(0.005)
 
 
