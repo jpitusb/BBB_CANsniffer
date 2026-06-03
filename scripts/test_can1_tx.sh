@@ -1,14 +1,14 @@
 #!/bin/bash
-# test_can1_tx.sh — bring up DCAN1 as a transmitter and send test frames
-# into the CAN bus so can0 (in listen-only mode) and the PRU can capture them.
+# test_can1_tx.sh — loopback test: DCAN1 transmits, DCAN0 receives + ACKs.
 #
-# Hardware required:
-#   SN65HVD230 #2 wired to P9.20 (TX) / P9.22 (RX)
-#   Both transceivers connected to the same CANH/CANL bus
-#   120Ω termination at each end of the bus
+# CAN requires at least one other node to ACK every frame.  In normal
+# operation can0 is listen-only (no ACK) to avoid disturbing external buses.
+# For this test we temporarily bring can0 up in normal mode so it ACKs can1.
+#
+# Hardware: second SN65HVD230 on P9.20 (TX) / P9.22 (RX), both transceivers
+# wired to the same CANH/CANL bus with 120Ω at each end.
 #
 # Usage: sudo ./test_can1_tx.sh [--loop]
-#   --loop  keep sending frames every 100 ms until Ctrl-C
 
 set -e
 
@@ -16,32 +16,47 @@ BITRATE=500000
 LOOP=false
 [ "${1:-}" = "--loop" ] && LOOP=true
 
-# Bring up can1 in normal mode (not listen-only — it needs to transmit)
-if [ "$(ip link show can1 | grep -c 'state UP')" -eq 0 ]; then
-    echo "Bringing up can1 at ${BITRATE} bit/s..."
-    ip link set can1 type can bitrate "${BITRATE}"
-    ip link set can1 up
-    echo "can1 up."
-else
-    echo "can1 already up."
-fi
+# Stop the sniffer service so we can reconfigure can0
+echo "Stopping can-sniffer service..."
+systemctl stop can-sniffer.service 2>/dev/null || true
 
 cleanup() {
     echo ""
-    echo "Bringing down can1..."
-    ip link set can1 down
-    echo "Done."
+    echo "Tearing down test interfaces..."
+    ip link set can1 down 2>/dev/null || true
+    ip link set can0 down 2>/dev/null || true
+    echo "Restarting can-sniffer service (restores listen-only mode)..."
+    systemctl start can-sniffer.service
+    echo "Done. Dashboard back at http://$(hostname -I | awk '{print $1}'):8000/"
     exit 0
 }
-trap cleanup INT TERM
+trap cleanup INT TERM EXIT
+
+# can0 in NORMAL mode so it can ACK can1's frames
+echo "Bringing can0 up in normal mode (ACK enabled)..."
+ip link set can0 down 2>/dev/null || true
+ip link set can0 type can bitrate "${BITRATE}" berr-reporting on
+ip link set can0 up
+
+# can1 in normal mode as transmitter
+echo "Bringing can1 up at ${BITRATE} bit/s..."
+ip link set can1 down 2>/dev/null || true
+ip link set can1 type can bitrate "${BITRATE}"
+ip link set can1 up
+
+echo ""
+echo "Both interfaces up.  Listening on can0..."
+candump can0 &
+CDPID=$!
+
+sleep 0.3
 
 send_burst() {
-    # A mix of IDs and data patterns to exercise the dashboard
-    cansend can1 001#0102030405060708   # short ID, 8 bytes
-    cansend can1 100#DEADBEEF           # 4-byte payload
-    cansend can1 200#0000000000000000   # all zeros
-    cansend can1 7FF#FF                 # max 11-bit ID, 1 byte
-    cansend can1 18FF5500#CAFEBABE      # extended 29-bit ID
+    cansend can1 001#0102030405060708
+    cansend can1 100#DEADBEEF
+    cansend can1 200#0000000000000000
+    cansend can1 7FF#FF
+    cansend can1 18FF5500#CAFEBABE
 }
 
 if $LOOP; then
@@ -53,6 +68,7 @@ if $LOOP; then
 else
     echo "Sending one burst of 5 test frames..."
     send_burst
-    echo "Done. Check candump on can0 or open the dashboard."
-    ip link set can1 down
+    sleep 0.5
 fi
+
+kill $CDPID 2>/dev/null || true
