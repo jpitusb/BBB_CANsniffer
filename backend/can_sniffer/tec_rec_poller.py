@@ -34,15 +34,12 @@ class TecRecPoller:
         except Exception:
             return
 
-        berr = data.get("berr_cnt", {})
+        info_data = data.get("linkinfo", {}).get("info_data", {})
+        berr = info_data.get("berr_cnt", {})
         self.tec = berr.get("tx", self.tec)
         self.rec = berr.get("rx", self.rec)
 
-        state_str: Optional[str] = (
-            data.get("linkinfo", {})
-                .get("info_data", {})
-                .get("state")
-        )
+        state_str: Optional[str] = info_data.get("state")
         if state_str:
             try:
                 self.state = BusState(state_str.lower())
