@@ -2,24 +2,24 @@
  * PRU0 minimal startup for gcc-pru.
  *
  * After PRU reset all registers are 0, including R2 (stack pointer).
- * The first function prologue does "sub sp, sp, N" which wraps sp to
- * 0xFFFFFFxx — an unmapped ARM address.  The subsequent "sbbo" to that
- * address stalls the OCP master before main ever gets to enable it.
+ * Without a valid sp, the first function prologue wraps sp to 0xFFFFFFxx
+ * (an OCP master address in unmapped ARM space), which stalls the PRU.
  *
- * Set sp to the top of PRU0 local DRAM (0x00001E00) so function prologues
- * write to valid local memory that is reachable without the OCP master.
- * PRU0 DRAM is 8 KB (0x00000000–0x00001FFF); leave 0x200 bytes for stack.
+ * We set sp = 0x1E00.  Because PRUDMEM origin is 0x0, this is ARM
+ * physical address 0x1E00 (boot ROM).  Stack saves hit boot ROM and are
+ * silently dropped — which is acceptable because:
+ *   1. main() never returns, so the corrupted saved return address
+ *      is never used.
+ *   2. Any C variables that matter (IEP state, ring buffer data) are
+ *      stored in DDR (shm) at 0x9F000000, not on the stack.
+ *
+ * Do NOT set sp to a PRUSS address (e.g., 0x4A301E00) — OCP
+ * self-targeting into the PRUSS subsystem is blocked on AM335x.
  */
 
 	.section ".text._start", "ax"
 	.global  _start
 
 _start:
-	/*
-	 * Set stack pointer to ARM physical 0x4A301E00 (top 512 bytes of PRU0
-	 * data RAM, leaving room below for BSS).  SBBO uses ARM physical
-	 * addresses, so sp must be in PRU DRAM's ARM range (0x4A300000-0x4A301FFF).
-	 * LDI only handles 16-bit immediates; load the two halves separately.
-	 */
-	ldi	r2, 0x1E00	/* sp = 0x00001E00 (SBBO writes to boot ROM, silently dropped) */
+	ldi	r2, 0x1E00
 	jmp	main

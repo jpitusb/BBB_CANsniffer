@@ -7,43 +7,38 @@ from typing import Iterator
 
 from .models import PruEvent, PruEventType
 
-PRU_SHM_PHYS_ADDR = 0x9F000000    # DDR reserved (no no-map) — PRU writes via OCP, ARM via /dev/mem
+PRU_SHM_PHYS_ADDR = 0x9F000000    # DDR reserved via memmap=8K$0x9F000000 in kernel cmdline
 PRU_SHM_SIZE      = 0x2000        # 8 KB
 PRU_SHM_MAGIC     = 0xCAFE1234
 PRU_RING_DEPTH    = 256
 
-# pru_shm_t header: magic(I) + write_idx(I) + pad(II) = 16 bytes
-_HDR  = struct.Struct("<IIII")
+# pru_shm_t header layout (must match shared_mem.h pru_shm_t):
+#   magic(I=4) + write_idx(I=4) + _pad(I=4) + _pru_prev_iep(I=4)
+#   + _pru_rollover_ns(Q=8) = 24 bytes total
+# Python only needs magic and write_idx; the rest are PRU-private.
+_HDR_MAGIC_WIDX = struct.Struct("<II")   # reads first 8 bytes
+_EVT_OFFSET     = 24                     # ring array starts at byte 24
 # pru_event_t: type(B) flags(B) seq(H) t_fall_ns(Q) pulse_ns(I) = 16 bytes
-# Must match shared_mem.h pru_event_t with __attribute__((packed))
 _EVT  = struct.Struct("<BBHQI")
-_EVT_OFFSET = _HDR.size   # ring array starts immediately after header
 
 
 class PruShm:
     """
-    Read-only mmap view of the PRU DDR ring buffer.
+    Live MAP_SHARED view of the PRU DDR ring buffer at 0x9F000000.
 
-    The physical memory region is marked no-map in the device tree, so the
-    ARM cache will not hold stale copies.  Python accesses it as uncached DRAM
-    through /dev/mem.
+    Memory is reserved via memmap=8K$0x9F000000 in the kernel cmdline and
+    accessed via /dev/mem opened for writing (MAP_SHARED).  ACCESS_READ
+    would create a MAP_PRIVATE snapshot and miss PRU writes.
     """
 
     def __init__(self, phys_addr: int = PRU_SHM_PHYS_ADDR) -> None:
-        self._fd = open("/dev/mem", "rb", buffering=0)
-        # mmap with ACCESS_READ leaves the mapping write-protected from Python,
-        # while the PRU still writes to the underlying physical memory.
-        self._mm = mmap.mmap(
-            self._fd.fileno(),
-            PRU_SHM_SIZE,
-            access=mmap.ACCESS_READ,
-            offset=phys_addr,
-        )
-        magic, _, _, _ = _HDR.unpack_from(self._mm, 0)
+        self._fd = open("/dev/mem", "r+b", buffering=0)
+        self._mm = mmap.mmap(self._fd.fileno(), PRU_SHM_SIZE, offset=phys_addr)
+        magic, _ = _HDR_MAGIC_WIDX.unpack_from(self._mm, 0)
         if magic != PRU_SHM_MAGIC:
             raise RuntimeError(
                 f"PRU SHM magic mismatch: 0x{magic:08X} (expected 0x{PRU_SHM_MAGIC:08X}); "
-                "firmware may not be running"
+                "firmware may not be running or OCP not pre-enabled"
             )
         self._read_idx: int = 0
         # Calibrate: convert PRU IEP nanoseconds to Unix time_ns once at startup.
@@ -53,7 +48,7 @@ class PruShm:
     # ------------------------------------------------------------------
 
     def _write_idx(self) -> int:
-        _, write_idx, _, _ = _HDR.unpack_from(self._mm, 0)
+        _, write_idx = _HDR_MAGIC_WIDX.unpack_from(self._mm, 0)
         return write_idx
 
     def _latest_pru_ns(self) -> int:

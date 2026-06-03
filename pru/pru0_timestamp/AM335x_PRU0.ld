@@ -9,12 +9,15 @@
 ENTRY(_start)
 
 /*
- * PRUDMEM origin is the ARM physical address of PRU0 data RAM (0x4A300000).
- * gcc-pru compiles SBBO/LBBO as OCP master accesses that use ARM physical
- * addresses — NOT the PRU local data bus address space (0x0000-0x1FFF).
- * Setting the origin here ensures the compiler generates correct ARM
- * physical addresses for all data accesses (stack, BSS variables, etc.)
- * so they land in PRU0 DRAM rather than ARM boot ROM.
+ * gcc-pru memory model: SBBO/LBBO always resolves as an ARM physical
+ * address.  PRUDMEM origin 0x0 means BSS/stack SBBOs hit ARM boot ROM
+ * (0x0000-0x1BFFF) and are silently dropped.  This is intentional:
+ *   - Stack saves/restores are lost but main() never returns, so
+ *     caller-saved register corruption does not matter.
+ *   - IEP rollover state and ring buffer data are kept in DDR (shm)
+ *     where SBBO to 0x9F000000 works correctly with OCP enabled.
+ * Do NOT move PRUDMEM to 0x4A300000 (PRU DRAM ARM physical): OCP
+ * self-targeting into the PRUSS subsystem is blocked on AM335x.
  */
 MEMORY
 {

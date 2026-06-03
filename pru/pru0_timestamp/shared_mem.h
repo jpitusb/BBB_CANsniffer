@@ -7,22 +7,21 @@
 #define PRU_RING_DEPTH       256U           /* must be a power of 2 */
 
 /*
- * PRUSS Shared RAM (12 KB).
+ * Ring buffer in DDR at 0x9F000000.
  *
- * Two addresses for the same physical memory:
- *   PRU_SHM_PRU_ADDR  — PRU local data bus address.  PRU accesses
- *     Shared RAM via the internal local bus (no OCP master required).
- *     The OCP master cannot self-target back to PRUSS Shared RAM.
- *   PRU_SHM_ARM_ADDR  — ARM physical address for Python /dev/mem mmap.
- *     PRUSS Shared RAM is a non-cached I/O region; no DTS reservation needed.
+ * gcc-pru SBBO/LBBO always resolves as an ARM physical address on the L3
+ * bus — there is no PRUSS-internal routing for SBBO.  PRUSS self-targeting
+ * (OCP master → L3 → PRUSS OCP slave) is blocked on AM335x.  DDR is
+ * external to PRUSS and writable via OCP with no self-targeting issue.
  *
- * Our struct is ~4 KB; 12 KB shared RAM is sufficient.
- */
-/*
- * Ring buffer in DDR at 0x9F000000 (reserved via DTS, no no-map).
- * SBBO uses ARM physical addresses — DDR is external to PRUSS so
- * there is no OCP self-targeting issue.  ARM accesses via /dev/mem
- * (MAP_SHARED writable, since no-map is absent).
+ * Memory is reserved from the kernel via memmap=8K$0x9F000000 in the
+ * kernel cmdline (/boot/uEnv.txt).  This makes it accessible via
+ * /dev/mem MAP_SHARED (read+write) from Python.
+ *
+ * OCP must be enabled (PRUSS_CFG.SYSCFG STANDBY_INIT=0) before any SBBO
+ * to DDR.  This is done from the ARM side before starting the PRU — see
+ * scripts/setup_pru.sh.  The firmware also calls ocp_enable() as a
+ * best-effort second attempt.
  */
 #define PRU_SHM_ARM_ADDR     0x9F000000U
 #define PRU_SHM_SIZE         0x2000U        /* 8 KB */
@@ -58,16 +57,24 @@ typedef struct __attribute__((packed)) {
 } pru_event_t;
 
 /*
- * Shared memory header placed at PRU_SHM_PHYS_ADDR.
- * PRU increments write_idx after each entry; Python polls write_idx and reads
- * all entries between its cached read_idx and the new write_idx.
- * Both indices are logical (never wrap); mask with (PRU_RING_DEPTH - 1) for
- * the physical slot.
+ * Shared memory layout at PRU_SHM_ARM_ADDR (DDR 0x9F000000).
+ *
+ * PRU increments write_idx after each event; Python polls write_idx
+ * and drains all new entries between its read_idx and write_idx.
+ * Both indices are logical (never wrap); mask with (PRU_RING_DEPTH-1).
+ *
+ * _pru_prev_iep / _pru_rollover_ns: gcc-pru SBBO always uses ARM
+ * physical addresses, so C static variables in PRUDMEM (origin 0x0)
+ * would hit boot ROM and be silently dropped.  These IEP rollover-
+ * tracking variables are stored here in DDR instead, where SBBO works.
+ * Python must not interpret them; they are private to the firmware.
  */
 typedef struct __attribute__((packed)) {
-    uint32_t         magic;       /* PRU_SHM_MAGIC; set by firmware at startup */
-    volatile uint32_t write_idx;  /* written by PRU, read by ARM                */
-    uint32_t         _pad[2];     /* pad header to 16 bytes for alignment        */
+    uint32_t          magic;            /* PRU_SHM_MAGIC at startup     */
+    volatile uint32_t write_idx;        /* written by PRU, read by ARM  */
+    uint32_t          _pad;             /* reserved                     */
+    uint32_t          _pru_prev_iep;    /* PRU private: last IEP sample */
+    uint64_t          _pru_rollover_ns; /* PRU private: rollover accum  */
     volatile pru_event_t ring[PRU_RING_DEPTH];
 } pru_shm_t;
 
