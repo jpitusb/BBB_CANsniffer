@@ -91,9 +91,13 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     last_sent = 0
     try:
         while True:
-            frames    = _frame_store.snapshot()
-            new_frames = [f.to_dict() for f in frames[last_sent:]]
-            last_sent  = len(frames)
+            frames     = _frame_store.snapshot()
+            n          = len(frames)
+            # When the circular buffer wraps, last_sent can exceed n.
+            # Clamp so we always send the tail of the current snapshot.
+            start      = max(0, min(last_sent, n))
+            new_frames = [f.to_dict() for f in frames[start:]]
+            last_sent  = n
             await websocket.send_text(json.dumps({
                 "type":     "update",
                 "frames":   new_frames,
