@@ -1,16 +1,18 @@
 [Unit]
-Description=CAN Sniffer Backend
+Description=CAN Sniffer Backend (FastAPI + WebSocket dashboard)
 After=network.target pru-loader.service
 Requires=pru-loader.service
 
 [Service]
-ExecStartPre=/opt/can_sniffer/scripts/setup_can.sh 500000
-ExecStart=/opt/can_sniffer/.venv/bin/uvicorn can_sniffer.server:app \
-    --host 0.0.0.0 --port 8000 --no-access-log
-WorkingDirectory=/opt/can_sniffer/backend
-Restart=on-failure
-RestartSec=3
+Type=simple
 User=root
+WorkingDirectory=/opt/can_sniffer/backend
+Environment=PYTHONPATH=/home/lauren/.local/lib/python3.11/site-packages
+Environment=CAN_SNIFFER_DB=/opt/can_sniffer/data/diagnostics.db
+ExecStartPre=/opt/can_sniffer/scripts/setup_can.sh 500000
+ExecStart=/usr/bin/python3.11 -m can_sniffer.server
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target

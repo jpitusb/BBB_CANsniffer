@@ -1,14 +1,12 @@
 [Unit]
-Description=Load PRU0 CAN timestamp firmware
+Description=PRU0 CAN timestamp firmware — configure pins, enable OCP, load firmware
 After=local-fs.target
+Before=can-sniffer.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c '\
-    echo stop  > /sys/class/remoteproc/remoteproc1/state 2>/dev/null || true; \
-    cp /opt/can_sniffer/pru/pru0_timestamp/am335x-pru0-fw /lib/firmware/; \
-    echo start > /sys/class/remoteproc/remoteproc1/state'
+ExecStart=/opt/can_sniffer/scripts/setup_pru.sh
 
 [Install]
 WantedBy=multi-user.target
