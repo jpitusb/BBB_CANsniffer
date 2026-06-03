@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tasks = [
         asyncio.create_task(_pru_reader_loop(pru, correlator, pfd)),
         asyncio.create_task(_can_reader_loop(reader, correlator)),
-        asyncio.create_task(_drain_loop(correlator)),
+        asyncio.create_task(_drain_loop(correlator, pfd)),
         asyncio.create_task(pfd.run()),
         asyncio.create_task(tec_rec.run()),
         asyncio.create_task(_timeout_loop()),
@@ -128,9 +128,11 @@ async def _can_reader_loop(reader: SocketCanReader, correlator: Correlator) -> N
                 correlator.ingest_frame(msg)
 
 
-async def _drain_loop(correlator: Correlator) -> None:
+async def _drain_loop(correlator: Correlator, pfd: PartialFrameDetector) -> None:
     while True:
         for frame in correlator.drain_matched():
+            if frame.pru_ts_ns is not None:
+                pfd.mark_matched()   # prevent false ABORTED_FRAME for this SOF
             _frame_store.append(frame)
             _bus_load.record(frame)
             _diag.ingest_frame(frame)
