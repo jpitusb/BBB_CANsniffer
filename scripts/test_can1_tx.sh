@@ -32,6 +32,11 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
+# Set DCAN1 pin mux: TX=P9.20 (can), RX=P9.19 (can)
+echo "Setting DCAN1 pin mux (P9.20=TX, P9.19=RX)..."
+echo can > /sys/devices/platform/ocp/ocp:P9_20_pinmux/state
+echo can > /sys/devices/platform/ocp/ocp:P9_19_pinmux/state
+
 # can0 in NORMAL mode so it can ACK can1's frames
 echo "Bringing can0 up in normal mode (ACK enabled)..."
 ip link set can0 down 2>/dev/null || true
