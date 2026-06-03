@@ -41,10 +41,14 @@ class TestCorrelator:
         c = Correlator(max_delta_ns=300_000)
         t = int(time.time_ns())
         c.ingest_pru(sof(t))
-        # Frame arrives 10 ms after PRU timestamp — beyond 300 µs max
+        # Frame arrives 10 ms after PRU timestamp — beyond 300 µs max delta.
+        # The stale SOF is discarded; the frame waits for the next SOF.
         c.ingest_frame(frame(ts=t / 1e9 + 0.010))
+        assert len(c.drain_matched()) == 0
+        # A newer SOF arrives — the frame's timestamp precedes it (delta < 0),
+        # so the frame is emitted without a PRU timestamp.
+        c.ingest_pru(sof(t + 20_000_000))
         matched = c.drain_matched()
-        # Stale SOF discarded; frame emitted without PRU ts
         assert len(matched) == 1
         assert matched[0].pru_ts_ns is None
 
@@ -54,7 +58,12 @@ class TestCorrelator:
         glitch = PruEvent(type=PruEventType.GLITCH, flags=0, seq=0,
                           t_fall_ns=t, pulse_ns=500)
         c.ingest_pru(glitch)
+        # Frame arrives 1 ms later; no SOF in queue, so frame waits.
         c.ingest_frame(frame(ts=t / 1e9 + 0.001))
+        assert len(c.drain_matched()) == 0
+        # A later SOF (for the next real frame) causes the queued frame to be
+        # emitted with no PRU ts (delta < 0 — frame is older than the SOF).
+        c.ingest_pru(sof(t + 2_000_000))
         matched = c.drain_matched()
         assert len(matched) == 1
-        assert matched[0].pru_ts_ns is None  # glitch not matched
+        assert matched[0].pru_ts_ns is None
