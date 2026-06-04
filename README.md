@@ -20,6 +20,53 @@ Beyond raw frame capture, the sniffer includes a full bus-health diagnostics lay
 
 ---
 
+## Installation
+
+### BBB #1 — Sniffer (quick start)
+
+```bash
+# 1. Flash Debian Bookworm IoT image, boot, SSH in as debian/temppwd
+
+# 2. First-time bootstrap — clones repo, patches /boot/uEnv.txt, reboots
+curl -sL https://raw.githubusercontent.com/jpitusb/BBB_CANsniffer/master/scripts/bootstrap.sh \
+    | sudo bash
+# --- board reboots automatically ---
+
+# 3. After reboot — build and install everything
+sudo /opt/can_sniffer/scripts/install_deps.sh
+
+# Done. Dashboard is at http://<BBB-IP>:8000/
+```
+
+Services (`pru-loader` + `can-sniffer`) start automatically on every subsequent boot.
+
+> **What bootstrap.sh does:** sets the hostname (`can-sniffer`), clones the repo to
+> `/opt/can_sniffer`, patches four required lines into `/boot/uEnv.txt` (PRU overlay,
+> disable video cape, disable cape-universal, DDR memmap), and reboots.
+
+> **What install_deps.sh does:** installs apt packages (`gcc-pru`, `can-utils`, etc.),
+> installs Python dependencies, builds the PRU firmware and DTS overlay, installs and
+> enables the systemd services.
+
+### BBB #2 — Traffic / fault generator (quick start)
+
+Wire the second BBB (see [Hardware → BBB #2 wiring](#bbb-2--traffic--fault-generator-wiring)), then:
+
+```bash
+# Same bootstrap step as BBB #1
+curl -sL https://raw.githubusercontent.com/jpitusb/BBB_CANsniffer/master/scripts/bootstrap.sh \
+    | sudo bash
+
+# After reboot, run the generator setup instead of install_deps.sh
+sudo /opt/can_sniffer/tools/can_gen/setup_bbb2.sh
+
+# Generate traffic
+sudo python3 /opt/can_sniffer/tools/can_gen/generator.py --list
+sudo python3 /opt/can_sniffer/tools/can_gen/generator.py -s normal --loop
+```
+
+---
+
 ## Architecture
 
 ```
