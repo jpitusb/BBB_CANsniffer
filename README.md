@@ -11,7 +11,7 @@ Beyond raw frame capture, the sniffer includes a full bus-health diagnostics lay
 - **Nanosecond hardware timestamps** — PRU0 captures the SOF falling edge via IEP timer (5 ns resolution), independent of Linux scheduler jitter
 - **FIFO timestamp correlation** — PRU timestamps are matched to SocketCAN frames in arrival order; frames without a PRU match still flow through
 - **Glitch and noise detection** — PRU classifies dominant pulses shorter than 0.5 bit as `GLITCH` events; bus stuck dominant > 10 bits fires `DOMINANT_RUNAWAY`
-- **Partial frame detection** — PRU SOF events with no matching DCAN0 frame within 5 ms are reported as aborted frames
+- **Partial frame detection** — PRU SOF events with no matching CAN frame within 5 ms are reported as aborted frames
 - **Protocol error decoding** — SocketCAN error frames decoded into bit/stuff/CRC/form/ACK error types; TEC and REC polled continuously
 - **Behavioral monitoring** — per-message state machine checks periodic timing, babbling transmitters, unexpected IDs, DLC mismatches, and signal range violations (requires DBC file)
 - **Three-tier alert system** — CRITICAL / WARN / INFO with per-severity cooldowns and deduplication
@@ -28,11 +28,11 @@ CAN Bus
   ▼
 SN65HVD230 transceiver (3.3 V)
   │             │
-  │ (DCAN0_RX)  │ (GPIO shadow)
+  │ (CAN RX)    │ (GPIO shadow)
   ▼             ▼
-P9.24         P8.45
+P9.19         P8.45
   │             │
-DCAN0         PRU0 (IEP timer)
+can0          PRU0 (IEP timer)
 (kernel)      │
   │           │  DDR ring buffer @ 0x9F000000
   ▼           ▼        (16-byte events, 256 slots)
@@ -91,16 +91,30 @@ SocketCAN   pru_shm.py (/dev/mem mmap)
 
 | Signal | BBB Header Pin | Ball | SN65HVD230 Pin | Notes |
 |--------|---------------|------|----------------|-------|
-| DCAN0_TX | P9.26 | A14 | TXD (1) | 3.3 V LVCMOS |
-| DCAN0_RX | P9.24 | D15 | RXD (4) | 3.3 V LVCMOS |
-| PRU0 RX shadow | P8.45 | R1 | RXD (4) | Y-tap of same RXD wire |
+| CAN TX | P9.20 | D14 | TXD (1) | 3.3 V LVCMOS |
+| CAN RX | P9.19 | D13 | RXD (4) | 3.3 V LVCMOS |
+| PRU0 RX shadow | P8.45 | R1 | RXD (4) | Y-tap of same RXD wire as P9.19 |
 | 3.3 V | P9.3 or P9.4 | — | VCC (3) | |
 | GND | P9.1 or P9.2 | — | GND (2) | Common ground |
 | RS pin | — | — | RS (8) | Tie to GND for high-speed mode |
 | CANH | DB9 pin 7 | — | CANH (7) | To bus high |
 | CANL | DB9 pin 2 | — | CANL (6) | To bus low |
 
-P8.45 (ball R1, LCD_DATA0 → `pr1_pru0_pru_r31_0` in mode 6) is Y-wired to P9.24 on the breadboard. Trace length between the two BBB pins is negligible (<5 cm).
+P8.45 (ball R1, LCD_DATA0 → `pr1_pru0_pru_r31_0` in mode 6) is Y-wired to P9.19 on the breadboard. Trace length between the two BBB pins is negligible (<5 cm).
+
+### BBB #2 — Traffic / Fault Generator Wiring
+
+A second BBB can generate CAN traffic and physical-layer faults for testing. It uses the same CAN pins but P8.45 is an **output** instead of an input:
+
+| Signal | BBB #2 Pin | Purpose |
+|--------|-----------|---------|
+| CAN TX | P9.20 | DCAN TX to transceiver TXD |
+| CAN RX | P9.19 | DCAN RX from transceiver RXD |
+| PRU fault inject | **P8.45** (output) | Also wired to transceiver TXD via diode — PRU drives dominant for glitch injection |
+
+Connect both transceivers' CANH/CANL lines together (with 120 Ω at each bus end) to form a two-node CAN network.
+
+See `tools/can_gen/setup_bbb2.sh` and `tools/can_gen/generator.py`.
 
 ### Optional: ADC voltage tap
 
@@ -125,14 +139,20 @@ BBB_CANsniffer/
 ├── hardware/
 │   └── bom.csv
 ├── dts/
-│   ├── BB-DCAN0-00A0.dts          # Phase 0: DCAN0 pin mux + enable
-│   ├── BB-PRU0-CAN-TS-00A0.dts    # Phase 1: PRU GPIO + DDR carveout
+│   ├── BB-DCAN0-00A0.dts          # (unused — can0 is enabled by default in 5.10-ti)
+│   ├── BB-PRU0-CAN-TS-00A0.dts    # Phase 1: delete PRUSS pinctrl conflict
 │   └── Makefile
 ├── pru/
 │   ├── pru0_timestamp/
 │   │   ├── shared_mem.h           # *** Cross-language contract (C ↔ Python) ***
-│   │   ├── resource_table.h       # TI remoteproc DDR carveout declaration
+│   │   ├── resource_table.h       # remoteproc resource table (empty — no DDR carveout needed)
+│   │   ├── startup.S              # sets sp before main (gcc-pru requires this)
+│   │   ├── AM335x_PRU0.ld         # linker script (PRUDMEM at 0x0, DDR ring buffer at 0x9F000000)
 │   │   ├── main.c                 # PRU0 IEP timestamp firmware (4-state machine)
+│   │   └── Makefile
+│   ├── pru0_fault_inject/         # BBB #2 fault generator PRU firmware
+│   │   ├── shared_mem.h           # fault modes + DDR command interface
+│   │   ├── main.c                 # drives P8.45 R30[0] for physical-layer faults
 │   │   └── Makefile
 │   └── pru1_bitbang/              # Phase 4 placeholder
 │       ├── main.c
@@ -167,8 +187,13 @@ BBB_CANsniffer/
 │   └── app.js                     # WebSocket client, ring buffer, diagnostic panels
 ├── scripts/
 │   ├── setup_can.sh               # ip link set can0 up type can bitrate N
-│   ├── install_deps.sh            # apt + pip install on BBB
-│   └── deploy.sh                  # rsync + service restart
+│   ├── setup_pru.sh               # P8.45 pin mux + OCP enable + PRU start (every boot)
+│   ├── install_deps.sh            # full one-shot setup for BBB #1 (sniffer)
+│   └── test_can1_tx.sh            # loopback test: can1 → can0 on same board
+├── tools/
+│   └── can_gen/
+│       ├── generator.py           # BBB #2 CAN traffic + fault generator (11 scenarios)
+│       └── setup_bbb2.sh          # full one-shot setup for BBB #2 (generator)
 └── systemd/
     ├── pru-loader.service         # Loads PRU firmware via remoteproc
     └── can-sniffer.service        # Starts FastAPI backend
@@ -182,9 +207,9 @@ BBB_CANsniffer/
 
 ### Prerequisites
 
-- BeagleBone Black running **Debian Bullseye** (IoT image, no GUI) from [rcn-ee.net](https://rcn-ee.net/rootfs/bb.org/testing/)
-- TI PRU C compiler (`clpru`) from [TI PRU-CGT](https://www.ti.com/tool/PRU-CGT) installed on the BBB or a cross-compile host
-- Python 3.11+ (included in Bullseye)
+- BeagleBone Black running **Debian 12 Bookworm** (IoT image) from [rcn-ee.net](https://rcn-ee.net/)
+- Kernel `5.10-ti` (verified: `5.10.168-ti-r72`)
+- Python 3.11+ (included in Bookworm)
 - A DBC file describing the target CAN network (for behavioral monitoring)
 
 ---
@@ -193,59 +218,38 @@ BBB_CANsniffer/
 
 **Goal:** `can0` up and receiving real frames from the target bus. No PRU involvement.
 
-#### 1. Flash Debian Bullseye
+#### 1. Flash Debian Bookworm
 
 ```bash
 # On your workstation
-xzcat bone-debian-11.x-iot-armhf-YYYY-MM-DD-4gb.img.xz | dd of=/dev/sdX bs=4M status=progress
+xzcat am335x-debian-12.x-iot-armhf-YYYY-MM-DD-4gb.img.xz | dd of=/dev/mmcblkX bs=4M status=progress
 ```
 
-Boot the BBB from SD, expand the filesystem, set hostname:
+Boot, SSH in (USB: `ssh debian@192.168.7.2`, password `temppwd`), set hostname:
 
 ```bash
-sudo /opt/scripts/tools/grow_partition.sh
-hostnamectl set-hostname can-sniffer
+sudo hostnamectl set-hostname can-sniffer
+echo "127.0.1.1 can-sniffer" | sudo tee -a /etc/hosts
 ```
 
-#### 2. Build and install the DCAN0 device tree overlay
+> **Note:** `can0` and `can1` are present by default in the 5.10-ti image — no device tree overlay needed to enable the CAN controller.
 
-```bash
-# On the BBB
-cd /opt/can_sniffer/dts
-make
-sudo make install     # copies .dtbo to /lib/firmware/
-```
-
-Edit `/boot/uEnv.txt` to load the overlay:
-
-```
-uboot_overlay_addr0=/lib/firmware/BB-DCAN0-00A0.dtbo
-```
-
-Reboot. Verify:
-
-```bash
-dmesg | grep -i dcan
-# Expected: c_can_platform 481cc000.can: c_can_platform device registered
-```
-
-#### 3. Bring up the CAN interface
+#### 2. Bring up the CAN interface
 
 ```bash
 sudo /opt/can_sniffer/scripts/setup_can.sh 500000
 ip -details link show can0
-# Expected: <NOARP,UP,LOWER_UP,ECHO> mtu 16 qdisc ... state UP ...
-#           can state ERROR-ACTIVE ...
+# Expected: state UP, bitrate 500000, listen-only in ctrlmodes
 ```
 
-#### 4. Verify frame reception
+#### 3. Verify frame reception
 
 ```bash
 candump can0
 # Frames should appear within milliseconds of bus traffic
 ```
 
-**Acceptance criteria:** `candump` shows frames; no `BUS-ERROR` or `RX-OVERRUN` after 60 s.
+**Acceptance criteria:** `candump` shows frames; no `BUS-ERROR` after 60 s.
 
 ---
 
@@ -253,60 +257,45 @@ candump can0
 
 **Goal:** PRU0 captures nanosecond SOF timestamps into the DDR ring buffer.
 
-#### 1. Install PRU CGT
-
-Download `clpru` and `lnkpru` from TI and add to `PATH`, or install the Debian package if available. Also install the PRU software support package:
+#### 1. Install toolchain
 
 ```bash
-sudo apt-get install -y ti-pru-software-support-package
-# or clone manually:
-git clone https://git.ti.com/cgit/pru-software-support-package/pru-software-support-package.git \
-    /usr/lib/ti/pru-software-support-package
+sudo apt-get install -y gcc-pru binutils-pru ti-pru-software-v6.3 device-tree-compiler
 ```
 
-#### 2. Build and deploy the PRU firmware
+#### 2. Configure uEnv.txt
+
+Add these lines to `/boot/uEnv.txt` (required for PRU pin mux and DDR reservation):
+
+```
+uboot_overlay_addr0=/lib/firmware/BB-PRU0-CAN-TS-00A0.dtbo
+disable_uboot_overlay_video=1
+enable_uboot_cape_universal=0
+cmdline=coherent_pool=1M net.ifnames=0 lpj=1990656 rng_core.default_quality=100 quiet memmap=8K$0x9F000000
+```
+
+#### 3. Build and install everything
 
 ```bash
-cd /opt/can_sniffer/pru/pru0_timestamp
-make
-sudo make deploy
-# or manually:
-sudo cp am335x-pru0-fw /lib/firmware/
+sudo /opt/can_sniffer/scripts/install_deps.sh
+# Builds PRU firmware + DTS overlay, installs systemd services
 ```
 
-#### 3. Install the PRU device tree overlay
+Reboot. Verify:
 
 ```bash
-cd /opt/can_sniffer/dts
-make BB-PRU0-CAN-TS-00A0.dtbo
-sudo cp BB-PRU0-CAN-TS-00A0.dtbo /lib/firmware/
-```
-
-Add to `/boot/uEnv.txt`:
-
-```
-uboot_overlay_addr1=/lib/firmware/BB-PRU0-CAN-TS-00A0.dtbo
-```
-
-Reboot. Verify PRU is running:
-
-```bash
-dmesg | grep remoteproc
-# Expected: remoteproc remoteproc1: remote processor pru0 is now up
-cat /sys/class/remoteproc/remoteproc1/state
-# Expected: running
+systemctl status pru-loader.service can-sniffer.service
+# Both should show: active
 ```
 
 #### 4. Smoke-test the ring buffer
 
 ```python
 # Run as root on the BBB
-import mmap, struct, time
-HDR = struct.Struct("<IIII")
-EVT = struct.Struct("<BBHQI")
-with open("/dev/mem", "rb") as f:
-    mm = mmap.mmap(f.fileno(), 8192, access=mmap.ACCESS_READ, offset=0x9F000000)
-magic, widx, _, _ = HDR.unpack_from(mm, 0)
+import mmap, struct
+with open("/dev/mem", "r+b") as f:
+    mm = mmap.mmap(f.fileno(), 0x2000, offset=0x9F000000)
+magic, widx = struct.unpack_from("<II", mm, 0)
 print(f"magic=0x{magic:08X}  write_idx={widx}")
 # Expected: magic=0xCAFE1234  write_idx=N (increasing with bus traffic)
 ```
@@ -320,39 +309,33 @@ print(f"magic=0x{magic:08X}  write_idx={widx}")
 #### 1. Install Python dependencies
 
 ```bash
-sudo /opt/can_sniffer/scripts/install_deps.sh
+pip3 install --break-system-packages '/opt/can_sniffer/backend[dev]'
 ```
 
-Or manually:
-
-```bash
-python3 -m venv /opt/can_sniffer/.venv
-/opt/can_sniffer/.venv/bin/pip install -e /opt/can_sniffer/backend
-```
+This is handled automatically by `install_deps.sh` (see Phase 1).
 
 #### 2. Place your DBC file
 
-Copy your network DBC file to the BBB and set the path in config (see [Configuration](#configuration)).
+Copy your network DBC file to the BBB and set the path in the service (see [Configuration](#configuration)).
 
 #### 3. Start the backend
 
+The systemd service starts automatically on boot after Phase 1 setup. To start manually:
+
 ```bash
-sudo /opt/can_sniffer/.venv/bin/uvicorn can_sniffer.server:app \
-    --host 0.0.0.0 --port 8000
+sudo systemctl start can-sniffer.service
 ```
 
-Or install and start the systemd service:
+Or run directly for development:
 
 ```bash
-sudo cp /opt/can_sniffer/systemd/*.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now pru-loader.service
-sudo systemctl enable --now can-sniffer.service
+sudo PYTHONPATH=/home/lauren/.local/lib/python3.11/site-packages \
+    python3.11 -m can_sniffer.server
 ```
 
 #### 4. Open the dashboard
 
-On the connected laptop, navigate to `http://<BBB-IP>:8000`. Frames should appear within 200 ms of bus traffic. Default BBB USB-network IP is `192.168.7.2`.
+Navigate to `http://<BBB-IP>:8000`. Frames appear within 200 ms of bus traffic.
 
 ---
 
@@ -411,7 +394,7 @@ SocketCAN delivers error frames with the error class bitmask in `arbitration_id`
 | `0x020` | ACK error (no node acknowledged) |
 | `0x040` | Bus-off (TEC ≥ 256) |
 
-TEC and REC are read from `data[6:8]` on controller error frames, and refreshed at 1 Hz via `ip -j -d link show can0`.
+TEC and REC are read from `data[6:8]` on controller error frames, and refreshed at 1 Hz via `ip -j -d link show can0` (P9.19/P9.20).
 
 ### Behavioral Monitoring (requires DBC)
 
@@ -488,34 +471,32 @@ Environment variables (set in the systemd service or shell):
 
 ## Development
 
-### Running tests on the host (no BBB required)
-
-The Python unit tests have no hardware dependencies — they use synthetic timestamps and in-memory state. `pru_shm.py` and `socketcan_reader.py` are not tested at the unit level (they require real hardware).
+### Running tests on BBB
 
 ```bash
-cd backend
-python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest -v
+cd /opt/can_sniffer/backend
+python3.11 -m pytest tests/ -v
+# 22 passed
 ```
+
+Tests use synthetic timestamps and in-memory state — no CAN hardware required.
 
 ### Deploying changes to the BBB
 
 ```bash
-BBB_HOST=192.168.7.2 BBB_USER=debian ./scripts/deploy.sh
+# On BBB
+cd /opt/can_sniffer && git pull
+sudo systemctl restart can-sniffer.service
 ```
-
-This rsyncs the repo (excluding `.git`, `__pycache__`, `.venv`, `*.db`) and restarts `can-sniffer.service`.
 
 ### Rebuilding PRU firmware after changes
 
 ```bash
-cd pru/pru0_timestamp
+cd /opt/can_sniffer/pru/pru0_timestamp
 make clean && make
-BBB_HOST=192.168.7.2 BBB_USER=debian make deploy
+sudo cp am335x-pru0-fw /lib/firmware/
+sudo systemctl restart pru-loader.service
 ```
-
-`make deploy` copies the firmware to `/lib/firmware/am335x-pru0-fw` and cycles `remoteproc1` via sysfs.
 
 ### Changing CAN bitrate
 
@@ -579,7 +560,7 @@ A properly wired CAN bus has exactly two 120 Ω termination resistors — one at
 - **SocketCAN error frames do not report CRC errors as a dedicated class:** CRC errors are inferred from `data[3]` (protocol violation location byte) when `CAN_ERR_PROT` is set. This is a Linux kernel limitation, not a firmware one.
 - **Aborted frame detection has a 5 ms latency:** By design — the timeout must exceed worst-case Linux socket delivery latency. Isolated aborted frames appear in the dashboard within 5–6 ms of the bus event.
 - **Web UI has no authentication:** The FastAPI server binds to `0.0.0.0:8000` with no access control. Use an SSH tunnel or restrict binding to `127.0.0.1` on shared networks.
-- **Single CAN channel:** Only DCAN0 (`can0`) is currently implemented. DCAN1 and PRU1 bit-bang are planned (see roadmap).
+- **Single CAN channel:** Only one CAN interface (`can0`, P9.19/P9.20) is currently implemented. PRU1 bit-bang second channel is planned (see roadmap).
 - **DBC signals with no min/max defined:** `cantools` returns `None` for `signal.minimum` / `signal.maximum`; range checking is silently skipped for those signals.
 
 ---
@@ -589,8 +570,7 @@ A properly wired CAN bus has exactly two 120 Ω termination resistors — one at
 - [ ] **Config file** — YAML/TOML config for bitrate, DBC path, DB path, ADC tap enable
 - [ ] **Historical query API** — REST endpoints for querying `can_sniffer.db` (`/api/frames`, `/api/alerts`, `/api/errors`) for post-hoc analysis
 - [ ] **ADC tap** — optional `adc_reader.py` reading `/sys/bus/iio/devices/iio:device0/` for bus DC health metrics
-- [ ] **DCAN1 second channel** — second SocketCAN interface (`can1`) via DCAN1, multiplexed in the WebSocket JSON as `"channel": 1`
-- [ ] **PRU1 bit-bang CAN** — software CAN receiver for a third channel at ≤ 250 kbit/s (`pru/pru1_bitbang/`)
+- [ ] **PRU1 bit-bang CAN** — software CAN receiver for a second channel at ≤ 250 kbit/s (`pru/pru1_bitbang/`), multiplexed in the WebSocket JSON as `"channel": 1`
 - [ ] **Frame export** — download captured frames as CSV or `.blf` (BLF logging format)
 - [ ] **SSH auth for dashboard** — HTTP Basic Auth or mTLS option for the FastAPI server
 - [ ] **Eye diagram approximation** — PRU multi-point sub-bit sampling to estimate bit edge quality
