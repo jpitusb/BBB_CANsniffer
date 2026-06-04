@@ -6,10 +6,17 @@
 #   P9.19 (RX) / P9.20 (TX)  →  can0
 #
 # Wiring for BBB #2:
-#   SN65HVD230 TXD  ← P9.20 (CAN TX)
-#                   ← P8.45 (PRU0 R30[0] output, mux mode 5) via diode/AND
-#   SN65HVD230 RXD  → P9.19 (CAN RX)
-#   Bus CANH/CANL connected to BBB #1's bus
+#   SN65HVD230 RXD  → P9.19 (CAN RX, direct)
+#   SN65HVD230 TXD  ← Wired-AND combiner node:
+#
+#     3.3V ── 4.7kΩ ──┬── TXD (SN65HVD230 pin 1)
+#                     │
+#     P9.20 ─[K◄A]───┘    D1: 1N5819 Schottky (anode at TXD, cathode at P9.20)
+#     P8.45 ─[K◄A]───┘    D2: 1N5819 Schottky (anode at TXD, cathode at P8.45)
+#
+#   Either pin LOW pulls TXD to ~0.35V (dominant).
+#   Both HIGH → pull-up holds TXD at 3.3V (recessive).
+#   Bus CANH/CANL connected to BBB #1's bus (120Ω at each end)
 
 set -e
 REPO=/opt/can_sniffer

@@ -104,15 +104,47 @@ P8.45 (ball R1, LCD_DATA0 → `pr1_pru0_pru_r31_0` in mode 6) is Y-wired to P9.1
 
 ### BBB #2 — Traffic / Fault Generator Wiring
 
-A second BBB can generate CAN traffic and physical-layer faults for testing. It uses the same CAN pins but P8.45 is an **output** instead of an input:
+A second BBB can generate CAN traffic and physical-layer faults for testing. It uses the same CAN pins but P8.45 is an **output** instead of an input.
 
-| Signal | BBB #2 Pin | Purpose |
-|--------|-----------|---------|
-| CAN TX | P9.20 | DCAN TX to transceiver TXD |
-| CAN RX | P9.19 | DCAN RX from transceiver RXD |
-| PRU fault inject | **P8.45** (output) | Also wired to transceiver TXD via diode — PRU drives dominant for glitch injection |
+#### Diode combiner circuit (required)
 
-Connect both transceivers' CANH/CANL lines together (with 120 Ω at each bus end) to form a two-node CAN network.
+P9.20 (DCAN TX) and P8.45 (PRU output) both need to drive the transceiver TXD line. They cannot be tied directly together — a push-pull HIGH output will fight a push-pull LOW output. Use two Schottky diodes in a wired-AND configuration with a pull-up:
+
+```
+3.3V ──── 4.7 kΩ ────┬──── TXD (SN65HVD230 pin 1)
+                     │
+P9.20 ──[K ◄── A]───┘
+P8.45 ──[K ◄── A]───┘
+         D1     D2
+      (1N5819 Schottky, ×2)
+```
+
+**Diode orientation**: anode at the TXD node, cathode at each BBB pin.
+
+| Component | Value | Notes |
+|-----------|-------|-------|
+| D1, D2 | 1N5819 (or BAT54) Schottky | Vf ≈ 0.35 V — keeps TXD_low well below SN65HVD230 Vil = 0.8 V |
+| R1 | 4.7 kΩ | Pull-up from TXD node to 3.3 V |
+
+**Why Schottky, not 1N4148?** A silicon diode has Vf ≈ 0.65 V. The SN65HVD230 guarantees Vil ≤ 0.8 V, leaving only 0.15 V margin. A Schottky (Vf ≈ 0.35 V) gives 0.45 V margin — much safer.
+
+**How it works:**
+- Both P9.20 and P8.45 HIGH → both diodes reverse-biased → pull-up holds TXD at 3.3 V (recessive)
+- P9.20 LOW (DCAN sending dominant) → D1 conducts → TXD ≈ 0.35 V (dominant) ✓
+- P8.45 LOW (PRU injecting fault) → D2 conducts → TXD ≈ 0.35 V (dominant) ✓
+- P9.20 HIGH while P8.45 LOW → D2 conducts; D1 reverse-biased → P9.20 not affected ✓
+- Pull-up current when dominant: (3.3 − 0.35) / 4.7 kΩ ≈ 0.6 mA — safe for both pins
+
+#### Wiring table
+
+| Signal | BBB #2 Pin | Connects to |
+|--------|-----------|-------------|
+| CAN TX | P9.20 | Cathode of D1; anode of D1 to TXD node |
+| CAN RX | P9.19 | SN65HVD230 RXD directly |
+| PRU fault inject | **P8.45** (output) | Cathode of D2; anode of D2 to TXD node |
+| TXD node | — | SN65HVD230 TXD pin 1 + pull-up to 3.3 V |
+
+Connect both transceivers' CANH/CANL lines together (120 Ω termination at each bus end).
 
 See `tools/can_gen/setup_bbb2.sh` and `tools/can_gen/generator.py`.
 
