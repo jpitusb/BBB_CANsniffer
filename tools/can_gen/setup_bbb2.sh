@@ -3,14 +3,13 @@
 # Run as root after cloning the repo to /opt/can_sniffer.
 #
 # Hardware differences from BBB #1 (sniffer):
-#   - P8.45 wired as PRU OUTPUT to transceiver TXD for fault injection
-#     (vs. BBB #1 where P8.45 is PRU INPUT shadowing DCAN0 RX)
-#   - Only DCAN0 (can0) is used; can1 not needed
+#   BBB #1 sniffer  — DCAN0 on P9.24(RX) / P9.26(TX) → can0
+#   BBB #2 generator — DCAN1 on P9.19(RX) / P9.20(TX) → can1
 #
 # Wiring for BBB #2:
-#   SN65HVD230 TXD  ← P9.26 (DCAN0 TX, mux mode 1)
-#                   ← P8.45 (PRU0 R30[0] output, mux mode 5) via diode / AND
-#   SN65HVD230 RXD  → P9.24 (DCAN0 RX, mux mode 1)  [optional, for monitoring]
+#   SN65HVD230 TXD  ← P9.20 (DCAN1 TX, mux mode 2)
+#                   ← P8.45 (PRU0 R30[0] output, mux mode 5) via diode/AND
+#   SN65HVD230 RXD  → P9.19 (DCAN1 RX, mux mode 2)
 #   Bus CANH/CANL connected to BBB #1's bus
 
 set -e
@@ -52,15 +51,19 @@ echo start > "$RPROC/state"
 sleep 1
 echo "PRU state: $(cat $RPROC/state)"
 
-# 6. Bring up can0 in normal mode (NOT listen-only — it's a transmitter)
-ip link set can0 down 2>/dev/null || true
-ip link set can0 type can bitrate 500000 berr-reporting on
-ip link set can0 up
-echo "can0: $(ip link show can0 | grep state)"
+# 6. Set DCAN1 pin mux and bring up can1 in normal mode (transmitter)
+echo "Setting DCAN1 pin mux (P9.20=TX, P9.19=RX)..."
+echo can > /sys/devices/platform/ocp/ocp:P9_20_pinmux/state
+echo can > /sys/devices/platform/ocp/ocp:P9_19_pinmux/state
+
+ip link set can1 down 2>/dev/null || true
+ip link set can1 type can bitrate 500000 berr-reporting on
+ip link set can1 up
+echo "can1: $(ip link show can1 | grep state)"
 
 echo ""
 echo "=== Setup complete ==="
-echo "Run the traffic generator:"
+echo "Run the traffic generator (uses can1 by default):"
 echo "  sudo python3 $REPO/tools/can_gen/generator.py --list"
 echo "  sudo python3 $REPO/tools/can_gen/generator.py -s normal --loop"
 echo "  sudo python3 $REPO/tools/can_gen/generator.py -s normal -s babble -s glitch_burst --loop"
