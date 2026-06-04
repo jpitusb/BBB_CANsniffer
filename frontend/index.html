@@ -15,6 +15,7 @@
     <span id="tec-rec">TEC=— REC=—</span>
     <span id="err-rate">0 err/s</span>
     <span id="conn-dot" class="dot disconnected" title="WebSocket"></span>
+    <span id="trigger-hdr-badge" class="badge badge-unknown hidden"></span>
   </div>
 </header>
 
@@ -23,6 +24,9 @@
   <nav id="tabs">
     <button class="tab active" data-panel="panel-frames">Frames</button>
     <button class="tab" data-panel="panel-diag">Diagnostics <span id="alert-badge" class="badge-count hidden">0</span></button>
+    <button class="tab" data-panel="panel-timing">Timing</button>
+    <button class="tab" data-panel="panel-latency">Latency</button>
+    <button class="tab" data-panel="panel-trigger">Trigger <span id="trigger-tab-badge" class="badge-count hidden"></span></button>
     <button class="tab" data-panel="panel-stats">Stats</button>
   </nav>
 
@@ -86,6 +90,69 @@
       </div>
 
     </div>
+  </section>
+
+  <!-- ── Timing panel ─────────────────────────────────────────── -->
+  <section id="panel-timing" class="panel">
+    <div class="table-wrap">
+      <table id="timing-table">
+        <thead><tr>
+          <th class="left">Arb ID</th><th>Count</th><th>fps</th>
+          <th>Min ms</th><th>Max ms</th><th>Mean ms</th>
+          <th>σ ms</th><th>p95 ms</th><th>Jitter RMS</th>
+        </tr></thead>
+        <tbody id="timing-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Latency panel ─────────────────────────────────────────── -->
+  <section id="panel-latency" class="panel">
+    <div class="toolbar">
+      <button id="btn-edit-pairs">Edit Pairs</button>
+      <button id="btn-reset-timing">Reset Stats</button>
+    </div>
+    <div class="table-wrap">
+      <table id="latency-table">
+        <thead><tr>
+          <th class="left">Pair</th><th>Count</th><th>Min µs</th>
+          <th>Max µs</th><th>Mean µs</th><th>σ µs</th><th>Last µs</th>
+        </tr></thead>
+        <tbody id="latency-tbody"></tbody>
+      </table>
+    </div>
+    <dialog id="pairs-dialog">
+      <h3>Latency Pairs (JSON)</h3>
+      <p style="font-size:11px;color:#888;margin-bottom:8px">
+        type "explicit": request_id, response_id, label<br>
+        type "pattern": request_base, response_base, label_template (use 0x hex strings)
+      </p>
+      <textarea id="pairs-json" rows="14" cols="56"></textarea>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button id="btn-save-pairs">Save</button>
+        <button id="btn-cancel-pairs">Cancel</button>
+      </div>
+    </dialog>
+  </section>
+
+  <!-- ── Trigger panel ─────────────────────────────────────────── -->
+  <section id="panel-trigger" class="panel">
+    <div class="toolbar">
+      <select id="trigger-type">
+        <option value="manual">Manual</option>
+        <option value="arb_id">On Arb ID</option>
+        <option value="error_frame">On Error Frame</option>
+        <option value="bus_load">On Bus Load ≥</option>
+      </select>
+      <input id="trigger-arb-id" type="text" placeholder="e.g. 0x160" style="display:none;width:100px">
+      <input id="trigger-load-val" type="number" step="0.05" min="0" max="1"
+             placeholder="0.0–1.0" style="display:none;width:80px">
+      <button id="btn-arm">Arm</button>
+      <button id="btn-disarm">Disarm</button>
+      <button id="btn-fire">Fire Now</button>
+      <span id="trigger-state-badge" class="badge badge-unknown">IDLE</span>
+    </div>
+    <div id="captures-list"></div>
   </section>
 
   <!-- ── Stats panel ──────────────────────────────────────────── -->

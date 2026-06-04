@@ -238,3 +238,93 @@ main { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
 }
 .stat-box div  { font-size: 32px; color: var(--accent); }
 .stat-box label { color: var(--text-dim); font-size: 11px; text-transform: uppercase; }
+
+/* ── Timing / Latency tables ──────────────────────────────── */
+#timing-table, #latency-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+#timing-table th, #latency-table th {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-weight: normal;
+  padding: 5px 10px;
+  position: sticky;
+  top: 0;
+  text-align: right;
+}
+#timing-table th.left, #latency-table th.left { text-align: left; }
+#timing-table td, #latency-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 3px 10px;
+  text-align: right;
+  white-space: nowrap;
+}
+#timing-table td:first-child, #latency-table td:first-child { text-align: left; }
+#timing-table tr:hover td, #latency-table tr:hover td { background: var(--surface); }
+#timing-table tr.timing-jitter-warn td { color: var(--warn); }
+
+/* ── Latency pairs dialog ─────────────────────────────────── */
+#pairs-dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 16px;
+}
+#pairs-dialog h3 {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: normal;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+#pairs-json {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  resize: vertical;
+  width: 100%;
+}
+#pairs-dialog button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 4px 12px;
+}
+#pairs-dialog button:first-child { border-color: var(--accent); color: var(--accent); }
+
+/* ── Trigger panel ────────────────────────────────────────── */
+.badge-warning { background: #4a3a10; color: var(--warn); }
+
+.capture-row {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  font-size: 12px;
+  gap: 12px;
+  padding: 6px 12px;
+}
+.capture-id {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  min-width: 70px;
+}
+.capture-row a {
+  border: 1px solid var(--ok);
+  border-radius: 3px;
+  color: var(--ok);
+  font-size: 11px;
+  padding: 1px 6px;
+  text-decoration: none;
+}
+.capture-row a:hover { background: var(--ok); color: var(--bg); }

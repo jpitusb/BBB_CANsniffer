@@ -88,6 +88,9 @@ function connect() {
 
     if (msg.bus_load !== undefined) updateBusLoad(msg.bus_load);
     if (msg.diag)                   updateDiag(msg.diag);
+    if (msg.timing)                 updateTiming(msg.timing);
+    if (msg.latency)                updateLatency(msg.latency);
+    if (msg.trigger)                updateTrigger(msg.trigger);
   };
 }
 
@@ -237,6 +240,167 @@ function updateBusStateBadge(state) {
   busStateBadge.textContent = cls[0];
   busStateBadge.className   = "badge " + cls[1];
 }
+
+// ── Timing ───────────────────────────────────────────────────────────────────
+function updateTiming(timing) {
+  const tbody = document.getElementById("timing-tbody");
+  if (!tbody || !timing) return;
+  const rows = Object.entries(timing)
+    .sort((a, b) => b[1].count - a[1].count);
+  tbody.replaceChildren();
+  const frag = document.createDocumentFragment();
+  for (const [id, s] of rows) {
+    const jitterWarn = s.interval_mean_ms && s.jitter_rms_ms > s.interval_mean_ms * 0.1;
+    const tr = document.createElement("tr");
+    if (jitterWarn) tr.className = "timing-jitter-warn";
+    const fmt = v => v === null || v === undefined ? "—" : v.toFixed(3);
+    tr.innerHTML =
+      `<td>${id}</td>` +
+      `<td>${s.count}</td>` +
+      `<td>${s.frames_per_sec ?? "—"}</td>` +
+      `<td>${fmt(s.interval_min_ms)}</td>` +
+      `<td>${fmt(s.interval_max_ms)}</td>` +
+      `<td>${fmt(s.interval_mean_ms)}</td>` +
+      `<td>${fmt(s.interval_std_ms)}</td>` +
+      `<td>${fmt(s.interval_p95_ms)}</td>` +
+      `<td>${fmt(s.jitter_rms_ms)}</td>`;
+    frag.appendChild(tr);
+  }
+  tbody.appendChild(frag);
+}
+
+// ── Latency ───────────────────────────────────────────────────────────────────
+function updateLatency(latency) {
+  const tbody = document.getElementById("latency-tbody");
+  if (!tbody || !latency) return;
+  tbody.replaceChildren();
+  const frag = document.createDocumentFragment();
+  for (const [label, s] of Object.entries(latency)) {
+    const tr = document.createElement("tr");
+    const fmt = v => v === null || v === undefined ? "—" : v.toFixed(1);
+    tr.innerHTML =
+      `<td>${label}</td>` +
+      `<td>${s.count}</td>` +
+      `<td>${fmt(s.min_us)}</td>` +
+      `<td>${fmt(s.max_us)}</td>` +
+      `<td>${fmt(s.mean_us)}</td>` +
+      `<td>${fmt(s.std_us)}</td>` +
+      `<td>${fmt(s.last_us)}</td>`;
+    frag.appendChild(tr);
+  }
+  tbody.appendChild(frag);
+}
+
+// ── Trigger ───────────────────────────────────────────────────────────────────
+const triggerStateBadge = document.getElementById("trigger-state-badge");
+const triggerHdrBadge   = document.getElementById("trigger-hdr-badge");
+const capturesList      = document.getElementById("captures-list");
+const triggerTypeSelect = document.getElementById("trigger-type");
+const triggerArbIdInput = document.getElementById("trigger-arb-id");
+const triggerLoadInput  = document.getElementById("trigger-load-val");
+const triggerTabBadge   = document.getElementById("trigger-tab-badge");
+
+triggerTypeSelect?.addEventListener("change", () => {
+  if (triggerArbIdInput) triggerArbIdInput.style.display =
+    triggerTypeSelect.value === "arb_id" ? "" : "none";
+  if (triggerLoadInput) triggerLoadInput.style.display =
+    triggerTypeSelect.value === "bus_load" ? "" : "none";
+});
+
+document.getElementById("btn-arm")?.addEventListener("click", async () => {
+  const body = { type: triggerTypeSelect?.value || "manual" };
+  if (body.type === "arb_id" && triggerArbIdInput?.value)
+    body.arb_id = parseInt(triggerArbIdInput.value.replace(/^0x/i, ""), 16);
+  if (body.type === "bus_load" && triggerLoadInput?.value)
+    body.bus_load_threshold = parseFloat(triggerLoadInput.value);
+  await fetch("/api/trigger/arm", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+});
+document.getElementById("btn-disarm")?.addEventListener("click", () =>
+  fetch("/api/trigger/disarm", { method: "POST" }));
+document.getElementById("btn-fire")?.addEventListener("click", () =>
+  fetch("/api/trigger/fire", { method: "POST" }));
+
+function updateTrigger(trigger) {
+  if (!trigger) return;
+  const STATE_CLASSES = {
+    idle:       ["IDLE",      "badge-unknown"],
+    armed:      ["ARMED",     "badge-warning"],
+    collecting: ["CAPTURING", "badge-busoff"],
+  };
+  const [label, cls] = STATE_CLASSES[trigger.state] || ["?", "badge-unknown"];
+  if (triggerStateBadge) {
+    triggerStateBadge.textContent = label;
+    triggerStateBadge.className   = `badge ${cls}`;
+  }
+  if (triggerHdrBadge) {
+    triggerHdrBadge.textContent = label;
+    triggerHdrBadge.className   = `badge ${cls}` + (trigger.state === "idle" ? " hidden" : "");
+  }
+  if (triggerTabBadge) {
+    triggerTabBadge.textContent = trigger.state === "idle" ? "" : "●";
+    triggerTabBadge.classList.toggle("hidden", trigger.state === "idle");
+  }
+  if (!capturesList) return;
+  capturesList.replaceChildren();
+  const frag = document.createDocumentFragment();
+  for (const cap of (trigger.captures || [])) {
+    const d = new Date(cap.trigger_ts * 1000);
+    const row = document.createElement("div");
+    row.className = "capture-row";
+    row.innerHTML =
+      `<span class="capture-id">${cap.id}</span>` +
+      `<span>${d.toLocaleTimeString()}</span>` +
+      `<span class="badge badge-unknown">${cap.condition_type}</span>` +
+      `<span>${cap.frame_count} frames</span>` +
+      `<a href="/api/captures/${cap.id}" target="_blank">JSON</a>` +
+      `<a href="/api/captures/${cap.id}/svg" target="_blank">SVG</a>`;
+    frag.appendChild(row);
+  }
+  capturesList.appendChild(frag);
+}
+
+// ── Latency pairs editor ──────────────────────────────────────────────────────
+document.getElementById("btn-edit-pairs")?.addEventListener("click", async () => {
+  const resp = await fetch("/api/latency/pairs");
+  const data = await resp.json();
+  const ta = document.getElementById("pairs-json");
+  if (ta) ta.value = JSON.stringify(data, null, 2);
+  document.getElementById("pairs-dialog")?.showModal();
+});
+document.getElementById("btn-save-pairs")?.addEventListener("click", async () => {
+  try {
+    const val = document.getElementById("pairs-json")?.value || "[]";
+    const pairs = JSON.parse(val);
+    await fetch("/api/latency/pairs", { method: "PUT",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(pairs) });
+    document.getElementById("pairs-dialog")?.close();
+  } catch (e) { alert("Invalid JSON: " + e.message); }
+});
+document.getElementById("btn-cancel-pairs")?.addEventListener("click", () =>
+  document.getElementById("pairs-dialog")?.close());
+document.getElementById("btn-reset-timing")?.addEventListener("click", () =>
+  fetch("/api/timing/reset", { method: "POST" }));
+
+// ── Annotate frame (double-click row) ─────────────────────────────────────────
+tbody.addEventListener("dblclick", async (e) => {
+  const tr = e.target.closest("tr");
+  if (!tr) return;
+  const cells = tr.querySelectorAll("td");
+  if (cells.length < 2) return;
+  // cells[0] = PRU ts / kernel_ts, cells[1] = arb_id
+  const tsRaw   = cells[0].textContent.trim();
+  const idRaw   = cells[1].textContent.trim();
+  const note    = prompt(`Annotate frame ${idRaw}:`);
+  if (!note) return;
+  const arb_id  = parseInt(idRaw.replace(/^0x/i, ""), 16);
+  // kernel_ts is embedded in the frame object — approximate from display
+  // Use Date.now() as fallback (server stores against kernel_ts of nearest frame)
+  const kernel_ts = parseFloat(tsRaw) || Date.now() / 1000;
+  await fetch("/api/frames/annotate", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kernel_ts, arb_id, note }) });
+});
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 connect();

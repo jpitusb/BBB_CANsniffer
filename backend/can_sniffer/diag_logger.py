@@ -71,6 +71,24 @@ CREATE TABLE IF NOT EXISTS bus_state_log (
     state   TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_busstate_ts ON bus_state_log(ts);
+
+CREATE TABLE IF NOT EXISTS captures (
+    id             TEXT    PRIMARY KEY,
+    trigger_ts     REAL    NOT NULL,
+    condition_type TEXT    NOT NULL,
+    frame_count    INTEGER NOT NULL,
+    data           TEXT    NOT NULL   -- JSON {pre:[...], post:[...]}
+);
+CREATE INDEX IF NOT EXISTS idx_captures_ts ON captures(trigger_ts);
+
+CREATE TABLE IF NOT EXISTS frame_annotations (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kernel_ts  REAL    NOT NULL,
+    arb_id     INTEGER NOT NULL,
+    note       TEXT    NOT NULL,
+    created_ts REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ann_ts ON frame_annotations(kernel_ts);
 """
 
 # Retention: frames 7 days, PRU events 30 days, alerts 90 days
@@ -80,6 +98,8 @@ DELETE FROM error_events      WHERE ts < (strftime('%s','now') - 86400 * 7);
 DELETE FROM pru_events        WHERE ts < (strftime('%s','now') - 86400 * 30);
 DELETE FROM behavioral_alerts WHERE ts < (strftime('%s','now') - 86400 * 90);
 DELETE FROM bus_state_log     WHERE ts < (strftime('%s','now') - 86400 * 30);
+DELETE FROM captures          WHERE trigger_ts < (strftime('%s','now') - 86400 * 30);
+DELETE FROM frame_annotations WHERE created_ts < (strftime('%s','now') - 86400 * 90);
 """
 
 _FLUSH_INTERVAL_S  = 0.05   # 20 Hz batch writes
@@ -95,6 +115,8 @@ class DiagLogger:
         self._pru_buf:    list = []
         self._alert_buf:  list = []
         self._busst_buf:  list = []
+        self._cap_buf:    list = []
+        self._ann_buf:    list = []
 
     def open(self) -> None:
         self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
@@ -154,6 +176,19 @@ class DiagLogger:
     def log_bus_state(self, tec: int, rec: int, state: str) -> None:
         self._busst_buf.append((time.time(), tec, rec, state))
 
+    def log_capture(self, session: dict) -> None:
+        import json
+        self._cap_buf.append((
+            session["id"],
+            session["trigger_ts"],
+            session["condition_type"],
+            session["frame_count"],
+            json.dumps({"pre": session["pre_frames"], "post": session["post_frames"]}),
+        ))
+
+    def log_annotation(self, kernel_ts: float, arb_id: int, note: str) -> None:
+        self._ann_buf.append((kernel_ts, arb_id, note, time.time()))
+
     # ------------------------------------------------------------------
 
     async def run(self) -> None:
@@ -195,6 +230,18 @@ class DiagLogger:
                     "INSERT INTO bus_state_log(ts,tec,rec,state) VALUES(?,?,?,?)",
                     self._busst_buf)
                 self._busst_buf.clear()
+            if self._cap_buf:
+                self._conn.executemany(
+                    "INSERT OR REPLACE INTO captures"
+                    "(id,trigger_ts,condition_type,frame_count,data) VALUES(?,?,?,?,?)",
+                    self._cap_buf)
+                self._cap_buf.clear()
+            if self._ann_buf:
+                self._conn.executemany(
+                    "INSERT INTO frame_annotations(kernel_ts,arb_id,note,created_ts)"
+                    " VALUES(?,?,?,?)",
+                    self._ann_buf)
+                self._ann_buf.clear()
 
     def _purge(self) -> None:
         if self._conn:
