@@ -20,7 +20,7 @@ Scenarios (can combine multiple with --scenario):
   intermittent   PRU: random glitch ~once/s
 
 Hardware (BBB #2):
-  DCAN1 transceiver on P9.19(RX) / P9.20(TX)  →  can1
+  Transceiver on P9.19(RX) / P9.20(TX)  →  can0  (same pins as BBB #1)
   P8.45 (PRU0 R30[0] output) wired to transceiver TXD alongside P9.20
   for physical-layer fault injection (see tools/can_gen/setup_bbb2.sh).
 """
@@ -304,8 +304,8 @@ def main() -> None:
                         help="scenario(s) to run (default: normal)")
     parser.add_argument("--loop", "-l", action="store_true",
                         help="run continuously until Ctrl-C")
-    parser.add_argument("--channel", "-c", default="can1",
-                        help="SocketCAN interface (default: can1 — DCAN1 on P9.19/P9.20)")
+    parser.add_argument("--channel", "-c", default="can0",
+                        help="SocketCAN interface (default: can0 — P9.19 RX / P9.20 TX)")
     parser.add_argument("--list", action="store_true",
                         help="list available scenarios and exit")
     args = parser.parse_args()
