@@ -1,0 +1,5 @@
+# Runtime data — not committed
+*.db
+*.db-wal
+*.db-shm
+latency_pairs.json

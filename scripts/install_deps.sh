@@ -58,6 +58,19 @@ cp "$REPO/systemd/pru-loader.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable pru-loader.service can-sniffer.service
 
+# ── Data directory + default configs ─────────────────────────────────────────
+DATA_DIR="$REPO/data"
+mkdir -p "$DATA_DIR"
+chown "$REAL_USER:$REAL_USER" "$DATA_DIR"
+
+# Create a sample latency_pairs.json if none exists
+PAIRS="$DATA_DIR/latency_pairs.json"
+if [ ! -f "$PAIRS" ]; then
+    cp "$REPO/data/latency_pairs.example.json" "$PAIRS"
+    chown "$REAL_USER:$REAL_USER" "$PAIRS"
+    echo "Created default latency_pairs.json — edit at $PAIRS"
+fi
+
 # ── Verify uEnv.txt ──────────────────────────────────────────────────────────
 UENV=/boot/uEnv.txt
 ok=true
@@ -81,5 +94,10 @@ echo "========================================================"
 echo "Install complete."
 echo "Start services now: sudo systemctl start pru-loader can-sniffer"
 echo "Or reboot for a clean start."
+echo ""
 echo "Dashboard: http://$(hostname -I | awk '{print $1}'):8000/"
+echo ""
+echo "Configure latency address pairs at:"
+echo "  $DATA_DIR/latency_pairs.json"
+echo "  (or via the Latency tab in the dashboard)"
 echo "========================================================"
