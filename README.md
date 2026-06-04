@@ -35,7 +35,7 @@ P9.19         P8.45
 can0          PRU0 (IEP timer)
 (kernel)      │
   │           │  DDR ring buffer @ 0x9F000000
-  ▼           ▼        (16-byte events, 256 slots)
+  ▼           ▼        (256 × 16-byte event slots, 24-byte header)
 SocketCAN   pru_shm.py (/dev/mem mmap)
   │           │
   └─────┬─────┘
@@ -78,7 +78,7 @@ SocketCAN   pru_shm.py (/dev/mem mmap)
 |-----|------|---------|------|
 | 1 | BeagleBone Black Rev C | AM335x SoC, 2× PRU, 2× DCAN | $55 |
 | 1 | SN65HVD230 CAN transceiver module | 3.3 V native — preferred over TJA1050 | $3 |
-| 1 | MicroSD 8 GB Class 10 | Debian Bullseye IoT image | $8 |
+| 1 | MicroSD 8 GB Class 10 | Debian Bookworm IoT image (or flash eMMC directly) | $8 |
 | 1 | 5 V / 2 A supply | BBB power | $8 |
 | 1 | DB9 female connector | CAN bus physical interface | $2 |
 | 2 | 120 Ω 1/4 W resistor | Bus termination (one per bus end) | $0.50 |
@@ -218,9 +218,10 @@ BBB_CANsniffer/
 │   ├── style.css                  # Dark theme, CSS custom properties
 │   └── app.js                     # WebSocket client, ring buffer, diagnostic panels
 ├── scripts/
+│   ├── bootstrap.sh               # first-time setup: clone repo, patch uEnv.txt, reboot
+│   ├── install_deps.sh            # post-reboot: apt, pip, build firmware, install services
 │   ├── setup_can.sh               # ip link set can0 up type can bitrate N
 │   ├── setup_pru.sh               # P8.45 pin mux + OCP enable + PRU start (every boot)
-│   ├── install_deps.sh            # full one-shot setup for BBB #1 (sniffer)
 │   └── test_can1_tx.sh            # loopback test: can1 → can0 on same board
 ├── tools/
 │   └── can_gen/
@@ -231,7 +232,7 @@ BBB_CANsniffer/
     └── can-sniffer.service        # Starts FastAPI backend
 ```
 
-> **Critical file:** `pru/pru0_timestamp/shared_mem.h` defines the 16-byte ring buffer event struct shared between the PRU C firmware and Python's `struct.unpack`. Any change to this file must be reflected in both `main.c` and `pru_shm.py` simultaneously.
+> **Critical file:** `pru/pru0_timestamp/shared_mem.h` defines the shared memory layout (24-byte header + 256 × 16-byte ring buffer events) shared between PRU C firmware and Python. Any layout change must be reflected in both `main.c` and `pru_shm.py` simultaneously.
 
 ---
 
@@ -289,31 +290,23 @@ candump can0
 
 **Goal:** PRU0 captures nanosecond SOF timestamps into the DDR ring buffer.
 
-#### 1. Install toolchain
+#### 1. Run bootstrap (first time only)
+
+If you haven't already run `bootstrap.sh`, it clones the repo, patches `uEnv.txt`, and reboots:
 
 ```bash
-sudo apt-get install -y gcc-pru binutils-pru ti-pru-software-v6.3 device-tree-compiler
+curl -sL https://raw.githubusercontent.com/jpitusb/BBB_CANsniffer/master/scripts/bootstrap.sh | sudo bash
+# reboots automatically
 ```
 
-#### 2. Configure uEnv.txt
-
-Add these lines to `/boot/uEnv.txt` (required for PRU pin mux and DDR reservation):
-
-```
-uboot_overlay_addr0=/lib/firmware/BB-PRU0-CAN-TS-00A0.dtbo
-disable_uboot_overlay_video=1
-enable_uboot_cape_universal=0
-cmdline=coherent_pool=1M net.ifnames=0 lpj=1990656 rng_core.default_quality=100 quiet memmap=8K$0x9F000000
-```
-
-#### 3. Build and install everything
+#### 2. Build and install everything (after the reboot)
 
 ```bash
 sudo /opt/can_sniffer/scripts/install_deps.sh
-# Builds PRU firmware + DTS overlay, installs systemd services
+# apt packages, pip, PRU firmware, DTS overlay, systemd services
 ```
 
-Reboot. Verify:
+Verify:
 
 ```bash
 systemctl status pru-loader.service can-sniffer.service
@@ -358,11 +351,12 @@ The systemd service starts automatically on boot after Phase 1 setup. To start m
 sudo systemctl start can-sniffer.service
 ```
 
-Or run directly for development:
+Or run directly for development (adjust PYTHONPATH to your user's site-packages):
 
 ```bash
-sudo PYTHONPATH=/home/lauren/.local/lib/python3.11/site-packages \
-    python3.11 -m can_sniffer.server
+PY=$(python3 --version | grep -oP '3\.\d+')
+sudo PYTHONPATH="$HOME/.local/lib/python${PY}/site-packages" \
+    python3 -m can_sniffer.server
 ```
 
 #### 4. Open the dashboard
@@ -453,7 +447,7 @@ Alerts deduplicate by `(category, can_id, signal_name)`. Resolution fires a `BUS
 
 ### SQLite Log Schema
 
-Database is written at `can_sniffer.db` in the working directory. Tables:
+Database path defaults to `/opt/can_sniffer/data/diagnostics.db` (override with `CAN_SNIFFER_DB`). Tables:
 
 | Table | Retention | Contents |
 |-------|-----------|---------|
@@ -487,17 +481,15 @@ WHERE severity = 'CRITICAL' ORDER BY ts DESC;
 
 ## Configuration
 
-Environment variables (set in the systemd service or shell):
+Environment variables recognised by the Python backend:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CAN_INTERFACE` | `can0` | SocketCAN interface name |
-| `CAN_BITRATE` | `500000` | Bus bitrate in bit/s |
-| `DBC_PATH` | _(none)_ | Absolute path to DBC file; behavioral monitoring disabled if unset |
-| `DB_PATH` | `can_sniffer.db` | SQLite database path |
-| `PRU_SHM_ADDR` | `0x9F000000` | Physical address of DDR carveout (must match DTS) |
-| `SERVER_HOST` | `0.0.0.0` | FastAPI bind address |
-| `SERVER_PORT` | `8000` | FastAPI bind port |
+| `CAN_SNIFFER_DB` | `/opt/can_sniffer/data/diagnostics.db` | SQLite database path |
+
+Everything else (`can0` interface, 500 kbit/s bitrate, port 8000) is currently hardcoded.
+The CAN bitrate thresholds are compiled into the PRU firmware (`shared_mem.h`); change them
+there and rebuild before changing the bitrate passed to `setup_can.sh`.
 
 ---
 
@@ -544,31 +536,50 @@ If you change the bus bitrate, recalculate these constants (IEP ticks = time_ns 
 
 ### `shared_mem.h` is the cross-language contract
 
-The 16-byte ring buffer event struct is defined once in C and read by Python using `struct.unpack("<BBHQI")`. Both sides must agree:
+`pru_shm_t` is the full shared memory struct. Python reads it via `/dev/mem` mmap.
+Any layout change must be reflected in both `main.c` and `pru_shm.py`.
+
+**Header** (24 bytes at `PRU_SHM_ARM_ADDR = 0x9F000000`):
 
 ```
 Offset  Size  Field
-     0     1  type       (PruEventType enum: 0x01 SOF, 0x02 GLITCH, 0x03 DOMINANT_RUNAWAY)
+     0     4  magic           (0xCAFE1234; Python checks this at startup)
+     4     4  write_idx       (PRU increments; Python polls; mask with 0xFF for slot)
+     8     4  _pad            (reserved)
+    12     4  _pru_prev_iep   (PRU-private: last IEP sample for rollover tracking)
+    16     8  _pru_rollover_ns (PRU-private: accumulated rollover ns)
+```
+
+**Ring buffer** (256 × 16-byte events, starting at offset 24):
+
+```
+Offset  Size  Field
+     0     1  type       (0x01 SOF, 0x02 GLITCH, 0x03 DOMINANT_RUNAWAY)
      1     1  flags      (bit 0: IEP rollover since previous entry)
      2     2  seq        (monotonic uint16, wraps at 65535)
      4     8  t_fall_ns  (uint64 monotonic ns since PRU start; Python adds epoch_offset)
     12     4  pulse_ns   (dominant pulse width in ns; 0 for SOF)
 ```
 
-Any change to this layout requires updating both `pru/pru0_timestamp/main.c` and `backend/can_sniffer/pru_shm.py` in the same commit.
+Python struct: `_HDR_MAGIC_WIDX = struct.Struct("<II")` (reads first 8 bytes), event offset = 24.
+
+> The `_pru_prev_iep` and `_pru_rollover_ns` fields exist because gcc-pru SBBO always
+> uses ARM physical addresses — C static variables at PRUDMEM origin 0x0 hit boot ROM
+> and writes are silently dropped. These fields put rollover state in DDR where SBBO works.
+> See `docs/gcc-pru-on-bbb-lessons.md` for the full explanation.
 
 ---
 
 ## Bus Impact — Is the Sniffer Invisible?
 
-**Short answer:** With `listen-only on` (the default in `setup_can.sh`), the sniffer is electrically passive and invisible to all other bus nodes. Without it, the DCAN0 controller participates in the protocol.
+**Short answer:** With `listen-only on` (the default in `setup_can.sh`), the sniffer is electrically passive and invisible to all other bus nodes. Without it, the CAN controller participates in the protocol.
 
 ### Three interaction mechanisms
 
 | Mechanism | Default mode | Listen-only mode |
 |-----------|-------------|-----------------|
-| **ACK bit** | DCAN0 acknowledges every correctly received frame | No ACK sent — controller is fully passive |
-| **Error frames** | DCAN0 transmits a 6-bit error flag if it detects a bus error, aborting the in-progress frame | No error frames sent |
+| **ACK bit** | CAN controller acknowledges every correctly received frame | No ACK sent — controller is fully passive |
+| **Error frames** | CAN controller transmits a 6-bit error flag if it detects a bus error, aborting the in-progress frame | No error frames sent |
 | **Physical load** | SN65HVD230 adds ~10–20 pF capacitance | Same — unavoidable but negligible on typical bus |
 
 #### Why ACK matters
@@ -600,7 +611,7 @@ A properly wired CAN bus has exactly two 120 Ω termination resistors — one at
 ## Roadmap
 
 - [ ] **Config file** — YAML/TOML config for bitrate, DBC path, DB path, ADC tap enable
-- [ ] **Historical query API** — REST endpoints for querying `can_sniffer.db` (`/api/frames`, `/api/alerts`, `/api/errors`) for post-hoc analysis
+- [ ] **Historical query API** — REST endpoints for querying the SQLite DB (`/api/frames`, `/api/alerts`, `/api/errors`) for post-hoc analysis
 - [ ] **ADC tap** — optional `adc_reader.py` reading `/sys/bus/iio/devices/iio:device0/` for bus DC health metrics
 - [ ] **PRU1 bit-bang CAN** — software CAN receiver for a second channel at ≤ 250 kbit/s (`pru/pru1_bitbang/`), multiplexed in the WebSocket JSON as `"channel": 1`
 - [ ] **Frame export** — download captured frames as CSV or `.blf` (BLF logging format)

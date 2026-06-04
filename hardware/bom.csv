@@ -1,10 +1,15 @@
 Qty,Part,Description,Approx_USD
 1,BeagleBone Black Rev C,Main compute board (AM335x SoC + 2x PRU + 2x DCAN),55.00
 1,SN65HVD230 module,3.3V CAN transceiver (preferred over TJA1050),3.00
-1,MicroSD 8GB Class 10,Debian Bullseye IoT image,8.00
+1,MicroSD 8GB Class 10,Debian Bookworm IoT image (or flash eMMC directly),8.00
 1,5V/2A power supply,USB or barrel-jack BBB power,8.00
 1,DB9 female connector,CAN bus physical interface,2.00
-2,120R 1/4W resistor,"Bus termination — only fit if sniffer is at a physical bus endpoint; omit for mid-bus tap",0.50
+2,120R 1/4W resistor,"Bus termination — only fit if BBB is at a physical bus endpoint; omit for mid-bus tap",0.50
 1,4.7k resistor,SN65HVD230 RS pin to GND (high-speed mode),0.10
 1,Small breadboard,Transceiver wiring,3.00
 4,Jumper wires M-F,BBB P9/P8 header to breadboard,1.00
+--- BBB #2 fault generator additions (not needed for sniffer-only) ---
+1,BeagleBone Black Rev C,Second board for traffic + fault generation,55.00
+1,SN65HVD230 module,Second transceiver for BBB #2,3.00
+2,1N5819 Schottky diode,"Wired-AND combiner: anode→TXD node, cathode→P9.20 and P8.45 respectively",0.20
+1,4.7k resistor,"Pull-up: TXD node to 3.3V (part of diode combiner circuit — separate from RS-pin resistor)",0.10
