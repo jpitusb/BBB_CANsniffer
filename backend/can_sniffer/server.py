@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -184,7 +184,7 @@ async def _timeout_loop() -> None:
 # ── Trigger endpoints ─────────────────────────────────────────────────────────
 
 @app.post("/api/trigger/arm")
-async def trigger_arm(body: dict) -> JSONResponse:
+async def trigger_arm(body: dict = Body(...)) -> JSONResponse:
     cond = TriggerCondition(
         type               = body.get("type", "manual"),
         arb_id             = body.get("arb_id"),
@@ -243,7 +243,7 @@ async def get_latency_pairs() -> JSONResponse:
 
 
 @app.put("/api/latency/pairs")
-async def set_latency_pairs(body: list) -> JSONResponse:
+async def set_latency_pairs(body: list = Body(...)) -> JSONResponse:
     save_pairs(PAIRS_PATH, body)
     explicit, patterns = load_pairs(PAIRS_PATH)
     _latency.set_pairs(explicit, patterns)
@@ -253,7 +253,7 @@ async def set_latency_pairs(body: list) -> JSONResponse:
 # ── Annotation endpoint ───────────────────────────────────────────────────────
 
 @app.post("/api/frames/annotate")
-async def annotate_frame(body: dict) -> JSONResponse:
+async def annotate_frame(body: dict = Body(...)) -> JSONResponse:
     kernel_ts = float(body["kernel_ts"])
     arb_id    = int(body["arb_id"])
     note      = str(body["note"])[:500]
