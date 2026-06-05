@@ -6,6 +6,7 @@ Qty,Part,Description,Approx_USD
 1,DB9 female connector,CAN bus physical interface,2.00
 2,120R 1/4W resistor,"Bus termination — only fit if BBB is at a physical bus endpoint; omit for mid-bus tap",0.50
 1,4.7k resistor,SN65HVD230 RS pin to GND (high-speed mode),0.10
+1,1k resistor,"P8.45 → P9.19 series isolation: limits boot conflict current (P8.45 is LCD_DATA0 push-pull output at boot before PRU overlay loads)",0.10
 1,Small breadboard,Transceiver wiring,3.00
 4,Jumper wires M-F,BBB P9/P8 header to breadboard,1.00
 --- BBB #2 fault generator additions (not needed for sniffer-only) ---

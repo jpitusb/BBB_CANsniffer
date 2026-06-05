@@ -145,14 +145,30 @@ SocketCAN   pru_shm.py (/dev/mem mmap)
 |--------|---------------|------|----------------|-------|
 | CAN TX | P9.20 | D14 | TXD (1) | 3.3 V LVCMOS |
 | CAN RX | P9.19 | D13 | RXD (4) | 3.3 V LVCMOS |
-| PRU0 RX shadow | P8.45 | R1 | RXD (4) | Y-tap of same RXD wire as P9.19 |
+| PRU0 RX shadow | P8.45 | R1 | RXD (4) | Via 1 kΩ to the P9.19/RXD junction — **see note** |
 | 3.3 V | P9.3 or P9.4 | — | VCC (3) | |
 | GND | P9.1 or P9.2 | — | GND (2) | Common ground |
 | RS pin | — | — | RS (8) | Tie to GND for high-speed mode |
 | CANH | DB9 pin 7 | — | CANH (7) | To bus high |
 | CANL | DB9 pin 2 | — | CANL (6) | To bus low |
 
-P8.45 (ball R1, LCD_DATA0 → `pr1_pru0_pru_r31_0` in mode 6) is Y-wired to P9.19 on the breadboard. Trace length between the two BBB pins is negligible (<5 cm).
+> **P8.45 boot conflict — 1 kΩ series resistor required.**
+> P8.45 boots as LCD_DATA0 (push-pull output, mode 0) before the PRU overlay reconfigures
+> it as a high-impedance PRU input (mode 6).  If P8.45 is wired directly to P9.19, the two
+> active drivers fight during boot and the board will not start.
+>
+> Add a **1 kΩ resistor** in series between P8.45 and the Y-tap node:
+>
+> ```
+> SN65HVD230 RXD ──┬──── P9.19 (CAN RX)
+>                  │
+>                1 kΩ
+>                  │
+>                P8.45 (PRU shadow input)
+> ```
+>
+> The resistor limits the boot-conflict current to 3.3 mA and is transparent at 500 kbit/s
+> (RC ≈ 50 ns with 50 pF node capacitance, well under the 200 ns edge budget).
 
 ### BBB #2 — Traffic / Fault Generator Wiring
 
