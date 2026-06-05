@@ -17,6 +17,11 @@ Beyond raw frame capture, the sniffer includes a full bus-health diagnostics lay
 - **Three-tier alert system** — CRITICAL / WARN / INFO with per-severity cooldowns and deduplication
 - **SQLite logging** — WAL-mode database with 7-day frame retention and 30-day PRU event retention
 - **Live browser dashboard** — dark-theme UI over WebSocket, 20 Hz update rate, no laptop software required
+- **Per-ID timing statistics** — rolling min/max/mean/σ/p95/p99 inter-frame intervals and jitter RMS; rows highlight when jitter exceeds 10% of mean
+- **Request/response latency** — configurable address pairs (explicit or pattern-based); measures µs latency between matched request and response frames; edit live from the dashboard
+- **Pre/post-trigger capture** — arm on arb_id / error frame / bus load threshold / manual fire; snapshots 200 frames before and after trigger; download as JSON or SVG sequence diagram
+- **SVG sequence diagrams** — swimlane diagram per captured session; latency pair arrows with measured times; trigger-point marker
+- **Frame annotation** — double-click any frame row to attach a text note; stored in SQLite
 
 ---
 
@@ -252,21 +257,29 @@ BBB_CANsniffer/
 │   │   ├── behavioral_monitor.py  # DBC-driven per-message state machine
 │   │   ├── alert_manager.py       # Dedup, cooldowns, resolution
 │   │   ├── diagnostics_aggregator.py  # Fan-out hub → WebSocket snapshot
-│   │   ├── diag_logger.py         # SQLite WAL logger (frames + all events)
-│   │   └── server.py              # FastAPI + WebSocket, asyncio task orchestration
+│   │   ├── diag_logger.py         # SQLite WAL logger (frames, events, captures, annotations)
+│   │   ├── timing_stats.py        # Per-ID interval stats: min/max/mean/σ/p95/p99/jitter
+│   │   ├── latency_monitor.py     # Request/response latency; explicit + pattern address pairs
+│   │   ├── trigger_capture.py     # Pre/post-trigger capture (200+200 frames, auto re-arm)
+│   │   ├── sequence_export.py     # SVG sequence diagram from capture session
+│   │   └── server.py              # FastAPI + WebSocket + REST API
 │   └── tests/
 │       ├── test_correlator.py
 │       ├── test_bus_load.py
 │       ├── test_error_decoder.py
 │       ├── test_behavioral_monitor.py
 │       └── test_alert_manager.py
+├── data/
+│   ├── latency_pairs.example.json # Template — copy to latency_pairs.json and edit
+│   └── .gitignore                 # *.db and latency_pairs.json excluded from git
 ├── frontend/
-│   ├── index.html                 # Frames, Diagnostics, Stats tabs
+│   ├── index.html                 # Frames, Timing, Latency, Trigger, Diagnostics, Stats tabs
 │   ├── style.css                  # Dark theme, CSS custom properties
-│   └── app.js                     # WebSocket client, ring buffer, diagnostic panels
+│   └── app.js                     # WebSocket client, ring buffer, timing/latency/trigger UI
 ├── scripts/
 │   ├── bootstrap.sh               # first-time setup: clone repo, patch uEnv.txt, reboot
 │   ├── install_deps.sh            # post-reboot: apt, pip, build firmware, install services
+│   ├── deploy.sh                  # push local changes to a running BBB and reload
 │   ├── setup_can.sh               # ip link set can0 up type can bitrate N
 │   ├── setup_pru.sh               # P8.45 pin mux + OCP enable + PRU start (every boot)
 │   └── test_can1_tx.sh            # loopback test: can1 → can0 on same board
@@ -422,6 +435,11 @@ The frontend is served automatically by the FastAPI backend from `frontend/`. No
 |-----|-------|----------|
 | Frames | Frame table | PRU timestamp, Arb ID, DLC, data bytes, per-ID delta time (µs) |
 | Frames | Bus load bar | Rolling 1-second utilization; colors green → amber → red |
+| Timing | Stats table | Per-ID: count, fps, min/max/mean/σ/p95 interval (ms), jitter RMS; highlights when jitter > 10% of mean |
+| Latency | Latency table | Per configured pair: count, min/max/mean/σ/last (µs) |
+| Latency | Edit Pairs | Live editor for `latency_pairs.json`; changes take effect immediately |
+| Trigger | Arm controls | Condition selector (arb_id / error frame / bus load / manual), arm/disarm/fire buttons, capture list |
+| Trigger | Captures list | Past captures with timestamp, condition, frame count; JSON and SVG download links |
 | Diagnostics | Bus health | TEC / REC live, bus state badge, error frames/sec |
 | Diagnostics | Protocol errors | Session counts: bit / stuff / CRC / form / ACK errors |
 | Diagnostics | Signal quality | Glitches/s, aborted frames/s, dominant runaway status |
@@ -429,11 +447,13 @@ The frontend is served automatically by the FastAPI backend from `frontend/`. No
 | Diagnostics | Alert feed | Active CRITICAL / WARN / INFO alerts with age |
 | Stats | Summary | Total frames, unique IDs, error events, aborted frames |
 
-**Keyboard / UI controls:**
+**Controls:**
 
 - **Filter ID** — hex prefix match, applied client-side against a 10 000-frame ring buffer
 - **Pause / Resume** — halts table updates without disconnecting WebSocket
 - **Clear** — empties the frame ring buffer and DOM table
+- **Double-click a frame row** — prompts for a text note; stored in SQLite with the frame's timestamp and arb_id
+- **Reset Stats** (Latency tab) — clears all timing and latency accumulators
 
 ---
 
@@ -444,6 +464,44 @@ Placeholder firmware in `pru/pru1_bitbang/main.c`. Intended for a second CAN bus
 ---
 
 ## Diagnostics Deep Dive
+
+### Timing Statistics
+
+Per-ID interval statistics are computed from a rolling window of the last 100 inter-frame intervals:
+
+| Metric | Description |
+|--------|-------------|
+| `interval_mean_ms` | Mean inter-frame interval |
+| `interval_std_ms` | Standard deviation (= jitter RMS) |
+| `interval_p95_ms` | 95th-percentile interval |
+| `interval_p99_ms` | 99th-percentile interval |
+| `frames_per_sec` | Derived from mean interval |
+
+Rows where `jitter_rms > interval_mean × 10%` are highlighted amber in the Timing tab.
+
+### Latency Monitoring
+
+Latency is measured from the kernel timestamp of the request frame to the kernel timestamp of the matching response frame. Results are in microseconds.
+
+Pattern pairs automatically match any address where the lower byte is the same node ID — `0x160 → 0x060`, `0x161 → 0x061`, etc. See [Configuration → Latency address pairs](#latency-address-pairs).
+
+### Pre/Post-Trigger Capture
+
+The trigger system maintains a rolling 200-frame pre-trigger buffer at all times. On trigger:
+1. Pre-buffer snapshot (last 200 frames before trigger) is frozen
+2. Next 200 frames collected as post-trigger
+3. Session saved to SQLite and listed in the Trigger tab
+4. Trigger auto-re-arms for the next event
+
+Trigger conditions:
+| Condition | Arms on |
+|-----------|---------|
+| `arb_id` | Specific arb ID seen |
+| `error_frame` | Any SocketCAN error frame |
+| `bus_load` | Bus utilisation ≥ threshold |
+| `manual` | Fire button / `POST /api/trigger/fire` |
+
+Each capture is downloadable as **JSON** (raw frame list) or **SVG** (sequence diagram with swimlanes, latency arrows, and trigger-point marker).
 
 ### Electrical / Signal Quality
 
@@ -503,6 +561,8 @@ Database path defaults to `/opt/can_sniffer/data/diagnostics.db` (override with 
 | `pru_events` | 30 days | All PRU ring buffer events (SOF, GLITCH, RUNAWAY) |
 | `behavioral_alerts` | 90 days | All fired alerts with severity and resolution state |
 | `bus_state_log` | 30 days | TEC/REC/state snapshots at 1 Hz |
+| `captures` | 30 days | Pre/post-trigger capture sessions (full frame JSON) |
+| `frame_annotations` | 90 days | User notes attached to specific frames by timestamp + arb_id |
 
 WAL mode with `synchronous=NORMAL` — safe on crash, readable concurrently by external tools.
 
@@ -528,7 +588,7 @@ WHERE severity = 'CRITICAL' ORDER BY ts DESC;
 
 ## Configuration
 
-Environment variables recognised by the Python backend:
+### Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -537,6 +597,34 @@ Environment variables recognised by the Python backend:
 Everything else (`can0` interface, 500 kbit/s bitrate, port 8000) is currently hardcoded.
 The CAN bitrate thresholds are compiled into the PRU firmware (`shared_mem.h`); change them
 there and rebuild before changing the bitrate passed to `setup_can.sh`.
+
+### Latency address pairs
+
+Edit `/opt/can_sniffer/data/latency_pairs.json` (or use the **Edit Pairs** button in the Latency tab). Two entry types:
+
+```json
+[
+  {
+    "type": "explicit",
+    "request_id": "0x601",
+    "response_id": "0x581",
+    "label": "SDO Node 1"
+  },
+  {
+    "type": "pattern",
+    "request_base": "0x100",
+    "response_base": "0x000",
+    "label_template": "Device 0x{node_id:02X}"
+  }
+]
+```
+
+**Explicit pair** — measures latency between two specific arb IDs.
+
+**Pattern pair** — auto-matches any address where the lower byte (node ID) is the same:
+`request_base | node_id` → `response_base | node_id`. For example, `0x100` base with `0x060` node matches `0x160 → 0x060`, `0x161 → 0x061`, etc. `node_mask` is always `0xFF` (lower byte).
+
+A template file is at `data/latency_pairs.example.json`. Changes take effect immediately via PUT `/api/latency/pairs` — no service restart needed.
 
 ---
 
@@ -555,9 +643,13 @@ Tests use synthetic timestamps and in-memory state — no CAN hardware required.
 ### Deploying changes to the BBB
 
 ```bash
-# On BBB
+# From your workstation — rsyncs repo, reinstalls Python package, restarts services
+BBB_HOST=10.183.184.161 BBB_USER=lauren ./scripts/deploy.sh
+
+# Or manually on the BBB
 cd /opt/can_sniffer && git pull
-sudo systemctl restart can-sniffer.service
+pip3 install --break-system-packages '/opt/can_sniffer/backend'
+sudo systemctl restart pru-loader can-sniffer
 ```
 
 ### Rebuilding PRU firmware after changes
@@ -614,6 +706,24 @@ Python struct: `_HDR_MAGIC_WIDX = struct.Struct("<II")` (reads first 8 bytes), e
 > uses ARM physical addresses — C static variables at PRUDMEM origin 0x0 hit boot ROM
 > and writes are silently dropped. These fields put rollover state in DDR where SBBO works.
 > See `docs/gcc-pru-on-bbb-lessons.md` for the full explanation.
+
+---
+
+## REST API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Dashboard HTML |
+| `GET` | `/api/latency/pairs` | Current latency pair config |
+| `PUT` | `/api/latency/pairs` | Update latency pairs (JSON body); takes effect immediately |
+| `POST` | `/api/timing/reset` | Clear all timing statistics |
+| `POST` | `/api/trigger/arm` | Arm trigger; body: `{"type":"arb_id","arb_id":352}` |
+| `POST` | `/api/trigger/disarm` | Disarm trigger |
+| `POST` | `/api/trigger/fire` | Manually fire trigger (must be armed) |
+| `GET` | `/api/captures` | List capture session summaries |
+| `GET` | `/api/captures/{id}` | Full capture JSON (pre + post frames) |
+| `GET` | `/api/captures/{id}/svg` | SVG sequence diagram for capture |
+| `POST` | `/api/frames/annotate` | Annotate a frame; body: `{"kernel_ts":…,"arb_id":…,"note":"…"}` |
 
 ---
 
