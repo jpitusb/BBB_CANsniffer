@@ -33,9 +33,15 @@ PIP="$REAL_HOME/.local/bin/pip3"
 echo "Reinstalling Python package..."
 "$PIP" install --break-system-packages --quiet "/opt/can_sniffer/backend"
 
+echo "Fixing script permissions..."
+find /opt/can_sniffer/scripts /opt/can_sniffer/tools -name "*.sh" -o -name "generator.py" \
+    2>/dev/null | xargs chmod +x 2>/dev/null || true
+
 echo "Reloading systemd and restarting services..."
-sudo systemctl daemon-reload
-sudo systemctl restart pru-loader.service can-sniffer.service
+echo "${SUDO_PASS:-}" | sudo -S systemctl daemon-reload 2>/dev/null || \
+    sudo systemctl daemon-reload
+echo "${SUDO_PASS:-}" | sudo -S systemctl restart pru-loader.service can-sniffer.service 2>/dev/null || \
+    sudo systemctl restart pru-loader.service can-sniffer.service
 
 # Wait briefly then check
 sleep 3
