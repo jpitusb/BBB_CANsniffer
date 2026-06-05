@@ -61,10 +61,8 @@ echo start > "$RPROC/state"
 sleep 1
 echo "PRU state: $(cat $RPROC/state)"
 
-# 6. Set CAN pin mux and bring up can0 in normal mode (transmitter)
-echo "Setting CAN pin mux (P9.20=TX, P9.19=RX)..."
-echo can > /sys/devices/platform/ocp/ocp:P9_20_pinmux/state
-echo can > /sys/devices/platform/ocp/ocp:P9_19_pinmux/state
+# 6. Bring up can0 in normal mode (transmitter)
+# P9.24/P9.26 (DCAN0) are already in CAN mode by default in the base DTB — no pin mux needed.
 
 ip link set can0 down 2>/dev/null || true
 ip link set can0 type can bitrate 500000 listen-only off berr-reporting on

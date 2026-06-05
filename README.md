@@ -82,7 +82,7 @@ SN65HVD230 transceiver (3.3 V)
   │             │
   │ (CAN RX)    │ (GPIO shadow)
   ▼             ▼
-P9.19         P8.45
+P9.24         P8.45
   │             │
 can0          PRU0 (IEP timer)
 (kernel)      │
@@ -143,9 +143,9 @@ SocketCAN   pru_shm.py (/dev/mem mmap)
 
 | Signal | BBB Header Pin | Ball | SN65HVD230 Pin | Notes |
 |--------|---------------|------|----------------|-------|
-| CAN TX | P9.20 | D14 | TXD (1) | 3.3 V LVCMOS |
-| CAN RX | P9.19 | D13 | RXD (4) | 3.3 V LVCMOS |
-| PRU0 RX shadow | P8.45 | R1 | RXD (4) | Via 1 kΩ to the P9.19/RXD junction — **see note** |
+| CAN TX | P9.26 | A14 | TXD (1) | DCAN0 TX, mux mode 1 |
+| CAN RX | P9.24 | D15 | RXD (4) | DCAN0 RX, mux mode 1 |
+| PRU0 RX shadow | P8.45 | R1 | RXD (4) | Via 1 kΩ to the P9.24/RXD junction — **see note** |
 | 3.3 V | P9.3 or P9.4 | — | VCC (3) | |
 | GND | P9.1 or P9.2 | — | GND (2) | Common ground |
 | RS pin | — | — | RS (8) | Tie to GND for high-speed mode |
@@ -154,13 +154,13 @@ SocketCAN   pru_shm.py (/dev/mem mmap)
 
 > **P8.45 boot conflict — 1 kΩ series resistor required.**
 > P8.45 boots as LCD_DATA0 (push-pull output, mode 0) before the PRU overlay reconfigures
-> it as a high-impedance PRU input (mode 6).  If P8.45 is wired directly to P9.19, the two
+> it as a high-impedance PRU input (mode 6).  If P8.45 is wired directly to P9.24, the two
 > active drivers fight during boot and the board will not start.
 >
 > Add a **1 kΩ resistor** in series between P8.45 and the Y-tap node:
 >
 > ```
-> SN65HVD230 RXD ──┬──── P9.19 (CAN RX)
+> SN65HVD230 RXD ──┬──── P9.24 (CAN RX)
 >                  │
 >                1 kΩ
 >                  │
@@ -176,12 +176,12 @@ A second BBB can generate CAN traffic and physical-layer faults for testing. It 
 
 #### Diode combiner circuit (required)
 
-P9.20 (DCAN TX) and P8.45 (PRU output) both need to drive the transceiver TXD line. They cannot be tied directly together — a push-pull HIGH output will fight a push-pull LOW output. Use two Schottky diodes in a wired-AND configuration with a pull-up:
+P9.26 (DCAN0 TX) and P8.45 (PRU output) both need to drive the transceiver TXD line. They cannot be tied directly together — a push-pull HIGH output will fight a push-pull LOW output. Use two Schottky diodes in a wired-AND configuration with a pull-up:
 
 ```
 3.3V ──── 4.7 kΩ ────┬──── TXD (SN65HVD230 pin 1)
                      │
-P9.20 ──[K ◄── A]───┘
+P9.26 ──[K ◄── A]───┘
 P8.45 ──[K ◄── A]───┘
          D1     D2
       (1N5819 Schottky, ×2)
@@ -197,18 +197,18 @@ P8.45 ──[K ◄── A]───┘
 **Why Schottky, not 1N4148?** A silicon diode has Vf ≈ 0.65 V. The SN65HVD230 guarantees Vil ≤ 0.8 V, leaving only 0.15 V margin. A Schottky (Vf ≈ 0.35 V) gives 0.45 V margin — much safer.
 
 **How it works:**
-- Both P9.20 and P8.45 HIGH → both diodes reverse-biased → pull-up holds TXD at 3.3 V (recessive)
-- P9.20 LOW (DCAN sending dominant) → D1 conducts → TXD ≈ 0.35 V (dominant) ✓
+- Both P9.26 and P8.45 HIGH → both diodes reverse-biased → pull-up holds TXD at 3.3 V (recessive)
+- P9.26 LOW (DCAN sending dominant) → D1 conducts → TXD ≈ 0.35 V (dominant) ✓
 - P8.45 LOW (PRU injecting fault) → D2 conducts → TXD ≈ 0.35 V (dominant) ✓
-- P9.20 HIGH while P8.45 LOW → D2 conducts; D1 reverse-biased → P9.20 not affected ✓
+- P9.26 HIGH while P8.45 LOW → D2 conducts; D1 reverse-biased → P9.26 not affected ✓
 - Pull-up current when dominant: (3.3 − 0.35) / 4.7 kΩ ≈ 0.6 mA — safe for both pins
 
 #### Wiring table
 
 | Signal | BBB #2 Pin | Connects to |
 |--------|-----------|-------------|
-| CAN TX | P9.20 | Cathode of D1; anode of D1 to TXD node |
-| CAN RX | P9.19 | SN65HVD230 RXD directly |
+| CAN TX | P9.26 | Cathode of D1; anode of D1 to TXD node |
+| CAN RX | P9.24 | SN65HVD230 RXD directly |
 | PRU fault inject | **P8.45** (output) | Cathode of D2; anode of D2 to TXD node |
 | TXD node | — | SN65HVD230 TXD pin 1 + pull-up to 3.3 V |
 
@@ -541,7 +541,7 @@ SocketCAN delivers error frames with the error class bitmask in `arbitration_id`
 | `0x020` | ACK error (no node acknowledged) |
 | `0x040` | Bus-off (TEC ≥ 256) |
 
-TEC and REC are read from `data[6:8]` on controller error frames, and refreshed at 1 Hz via `ip -j -d link show can0` (P9.19/P9.20).
+TEC and REC are read from `data[6:8]` on controller error frames, and refreshed at 1 Hz via `ip -j -d link show can0` (P9.24/P9.26).
 
 ### Behavioral Monitoring (requires DBC)
 
@@ -776,7 +776,7 @@ A properly wired CAN bus has exactly two 120 Ω termination resistors — one at
 - **SocketCAN error frames do not report CRC errors as a dedicated class:** CRC errors are inferred from `data[3]` (protocol violation location byte) when `CAN_ERR_PROT` is set. This is a Linux kernel limitation, not a firmware one.
 - **Aborted frame detection has a 5 ms latency:** By design — the timeout must exceed worst-case Linux socket delivery latency. Isolated aborted frames appear in the dashboard within 5–6 ms of the bus event.
 - **Web UI has no authentication:** The FastAPI server binds to `0.0.0.0:8000` with no access control. Use an SSH tunnel or restrict binding to `127.0.0.1` on shared networks.
-- **Single CAN channel:** Only one CAN interface (`can0`, P9.19/P9.20) is currently implemented. PRU1 bit-bang second channel is planned (see roadmap).
+- **Single CAN channel:** Only one CAN interface (`can0`, P9.24/P9.26) is currently implemented. PRU1 bit-bang second channel is planned (see roadmap).
 - **DBC signals with no min/max defined:** `cantools` returns `None` for `signal.minimum` / `signal.maximum`; range checking is silently skipped for those signals.
 
 ---
