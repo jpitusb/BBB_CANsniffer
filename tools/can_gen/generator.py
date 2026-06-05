@@ -118,70 +118,42 @@ def make_body(lights: int = 1, doors: int = 0) -> bytes:
 
 # ── Scenario tasks ──────────────────────────────────────────────────────────
 
-import socket as _socket
-import struct as _struct
-
-# CAN frame: unsigned int (can_id) + unsigned char (len) + 3 padding + 8 data bytes
-_CAN_FRAME = _struct.Struct("=IB3x8s")
+import subprocess as _subprocess
 
 
-def _make_socket(channel: str) -> _socket.socket:
-    """Open a non-blocking raw CAN socket."""
-    s = _socket.socket(_socket.AF_CAN, _socket.SOCK_RAW, _socket.CAN_RAW)
-    s.setblocking(False)
-    s.bind((channel,))
-    return s
-
-
-def _raw_send(sock: _socket.socket, arb_id: int, data: bytes) -> bool:
-    """Send one CAN frame; returns False if buffer full (non-fatal)."""
-    payload = data.ljust(8, b'\x00')[:8]
-    frame = _CAN_FRAME.pack(arb_id, len(data), payload)
-    try:
-        sock.send(frame)
-        return True
-    except BlockingIOError:
-        return False   # TX queue full — skip this frame
-    except OSError:
-        return False
+def _cansend(channel: str, arb_id: int, data: bytes) -> bool:
+    """Send one CAN frame via cansend. Returns False on error."""
+    hex_data = data.hex().upper()
+    frame_str = f"{arb_id:03X}#{hex_data}"
+    result = _subprocess.run(
+        ["cansend", channel, frame_str],
+        capture_output=True, timeout=0.5
+    )
+    return result.returncode == 0
 
 
 async def task_normal(bus: can.Bus) -> None:
-    """Three periodic messages using a non-blocking raw socket."""
-    sock = _make_socket(bus.channel)
-    now = time.monotonic()
-    t_engine = now + 0.050   # first frame after 50ms — let bus settle
-    t_trans  = now + 0.100
-    t_body   = now + 0.150
-    t_last_send = 0.0        # enforce minimum 15ms between any two sends
+    """Three periodic messages via cansend subprocess."""
+    channel = bus.channel
     sent = 0
-    try:
-        while True:
-            now = time.monotonic()
-            sent_this_iter = False
-            if now >= t_engine and (now - t_last_send) >= 0.015:
-                t_engine = now + 0.010
-                data = make_engine(speed_rpm=random.uniform(800, 3000),
-                                   throttle_pct=random.uniform(5, 40))
-                if _raw_send(sock, 0x100, data):
-                    sent += 1
-                    t_last_send = now
-                    sent_this_iter = True
-                    if sent % 50 == 0:
-                        print(f"[normal] {sent} frames sent", flush=True)
-            if not sent_this_iter and now >= t_trans and (now - t_last_send) >= 0.015:
-                t_trans = now + 0.050
-                if _raw_send(sock, 0x200, make_trans(gear=3,
-                             speed_kmh=random.uniform(50, 80))):
-                    t_last_send = now
-                    sent_this_iter = True
-            if not sent_this_iter and now >= t_body and (now - t_last_send) >= 0.015:
-                t_body = now + 0.100
-                if _raw_send(sock, 0x300, make_body()):
-                    t_last_send = now
-            await asyncio.sleep(0.010)
-    finally:
-        sock.close()
+    print(f"[normal] starting on {channel}", flush=True)
+    while True:
+        data = make_engine(speed_rpm=random.uniform(800, 3000),
+                           throttle_pct=random.uniform(5, 40))
+        ok = await asyncio.to_thread(_cansend, channel, 0x100, data)
+        if ok:
+            sent += 1
+            if sent % 20 == 0:
+                print(f"[normal] {sent} frames sent", flush=True)
+        await asyncio.sleep(0.010)
+
+        data = make_trans(gear=3, speed_kmh=random.uniform(50, 80))
+        await asyncio.to_thread(_cansend, channel, 0x200, data)
+        await asyncio.sleep(0.040)
+
+        data = make_body()
+        await asyncio.to_thread(_cansend, channel, 0x300, data)
+        await asyncio.sleep(0.050)
 
 
 async def task_babble(bus: can.Bus) -> None:
