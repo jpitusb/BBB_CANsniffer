@@ -35,6 +35,10 @@ echo "Building PRU fault injector..."
 make -C "$REPO/pru/pru0_fault_inject" clean all
 cp "$REPO/pru/pru0_fault_inject/am335x-pru0-fault-inject" /lib/firmware/
 
+# Install Python dependency system-wide so it's accessible under sudo
+echo "Installing python-can system-wide..."
+pip3 install --break-system-packages --quiet python-can
+
 # 3. Configure P8.45 as PRU OUTPUT (mode 5 = pr1_pru0_pru_r30_0)
 echo "Setting P8.45 to PRU output mode..."
 echo pruout > /sys/devices/platform/ocp/ocp:P8_45_pinmux/state
