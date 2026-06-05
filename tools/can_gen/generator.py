@@ -123,21 +123,24 @@ async def task_normal(bus: can.Bus) -> None:
     t_engine = t_trans = t_body = time.monotonic()
     while True:
         now = time.monotonic()
-        if now >= t_engine:
-            bus.send(can.Message(arbitration_id=0x100, data=make_engine(
-                speed_rpm=random.uniform(800, 3000),
-                throttle_pct=random.uniform(5, 40)),
-                is_extended_id=False))
-            t_engine = now + 0.010
-        if now >= t_trans:
-            bus.send(can.Message(arbitration_id=0x200, data=make_trans(
-                gear=3, speed_kmh=random.uniform(50, 80)),
-                is_extended_id=False))
-            t_trans = now + 0.050
-        if now >= t_body:
-            bus.send(can.Message(arbitration_id=0x300, data=make_body(),
-                is_extended_id=False))
-            t_body = now + 0.100
+        try:
+            if now >= t_engine:
+                bus.send(can.Message(arbitration_id=0x100, data=make_engine(
+                    speed_rpm=random.uniform(800, 3000),
+                    throttle_pct=random.uniform(5, 40)),
+                    is_extended_id=False))
+                t_engine = now + 0.010
+            if now >= t_trans:
+                bus.send(can.Message(arbitration_id=0x200, data=make_trans(
+                    gear=3, speed_kmh=random.uniform(50, 80)),
+                    is_extended_id=False))
+                t_trans = now + 0.050
+            if now >= t_body:
+                bus.send(can.Message(arbitration_id=0x300, data=make_body(),
+                    is_extended_id=False))
+                t_body = now + 0.100
+        except can.CanOperationError:
+            await asyncio.sleep(0.1)   # brief back-off on TX error
         await asyncio.sleep(0.001)
 
 
@@ -264,6 +267,9 @@ async def run(scenarios: list[str], channel: str, loop: bool) -> None:
     pru = PruFault()
     bus = can.interface.Bus(channel=channel, interface="socketcan")
     print(f"[CAN] connected to {channel}")
+    # Brief pause after socket open — let the CAN controller settle before
+    # sending; simultaneous burst from asyncio.gather can overflow TX queue.
+    await asyncio.sleep(0.2)
 
     try:
         while True:
