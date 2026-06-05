@@ -15,7 +15,7 @@ ip link set can0 down 2>/dev/null || true
 
 case "$MODE" in
     normal)
-        ip link set can0 type can bitrate $BITRATE berr-reporting on
+        ip link set can0 type can bitrate $BITRATE listen-only off berr-reporting on
         ip link set can0 up
         echo "can0 → normal mode (will ACK frames)"
         ;;
