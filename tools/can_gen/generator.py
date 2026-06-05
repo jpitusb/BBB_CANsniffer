@@ -133,27 +133,41 @@ def _cansend(channel: str, arb_id: int, data: bytes) -> bool:
 
 
 async def task_normal(bus: can.Bus) -> None:
-    """Three periodic messages via cansend subprocess."""
+    """Three messages at ~7 frames/sec total (one every ~140 ms)."""
     channel = bus.channel
     sent = 0
-    print(f"[normal] starting on {channel}", flush=True)
+    print(f"[normal] starting on {channel} (~7 fps)", flush=True)
     while True:
+        # 0x100 EngineStatus — every 300 ms
         data = make_engine(speed_rpm=random.uniform(800, 3000),
                            throttle_pct=random.uniform(5, 40))
         ok = await asyncio.to_thread(_cansend, channel, 0x100, data)
         if ok:
             sent += 1
-            if sent % 20 == 0:
-                print(f"[normal] {sent} frames sent", flush=True)
-        await asyncio.sleep(0.010)
+            print(f"[normal] sent #{sent}  0x100 engine", flush=True)
+        else:
+            print("[normal] 0x100 FAILED", flush=True)
+        await asyncio.sleep(0.300)
 
+        # 0x200 TransmStatus — every 400 ms
         data = make_trans(gear=3, speed_kmh=random.uniform(50, 80))
-        await asyncio.to_thread(_cansend, channel, 0x200, data)
-        await asyncio.sleep(0.040)
+        ok = await asyncio.to_thread(_cansend, channel, 0x200, data)
+        if ok:
+            sent += 1
+            print(f"[normal] sent #{sent}  0x200 trans", flush=True)
+        else:
+            print("[normal] 0x200 FAILED", flush=True)
+        await asyncio.sleep(0.400)
 
+        # 0x300 BodyControl — every 500 ms
         data = make_body()
-        await asyncio.to_thread(_cansend, channel, 0x300, data)
-        await asyncio.sleep(0.050)
+        ok = await asyncio.to_thread(_cansend, channel, 0x300, data)
+        if ok:
+            sent += 1
+            print(f"[normal] sent #{sent}  0x300 body", flush=True)
+        else:
+            print("[normal] 0x300 FAILED", flush=True)
+        await asyncio.sleep(0.500)
 
 
 async def task_babble(bus: can.Bus) -> None:
