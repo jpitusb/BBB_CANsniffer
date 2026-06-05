@@ -43,7 +43,7 @@ except ImportError:
 # ── Shared memory for PRU fault injector ────────────────────────────────────
 FAULT_SHM_ADDR  = 0x9F000000
 FAULT_SHM_SIZE  = 0x1000
-FAULT_SHM_MAGIC = 0xFAUL7123 if False else 0xFA017123   # 0xFAUL7123
+FAULT_SHM_MAGIC = 0xFA017123
 
 FAULT_IDLE         = 0
 FAULT_GLITCH       = 1
