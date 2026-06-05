@@ -118,47 +118,63 @@ def make_body(lights: int = 1, doors: int = 0) -> bytes:
 
 # ── Scenario tasks ──────────────────────────────────────────────────────────
 
-def _send(bus: can.Bus, msg: can.Message) -> bool:
-    """Thread-safe blocking send; returns True on success."""
+import socket as _socket
+import struct as _struct
+
+# CAN frame: unsigned int (can_id) + unsigned char (len) + 3 padding + 8 data bytes
+_CAN_FRAME = _struct.Struct("=IB3x8s")
+
+
+def _make_socket(channel: str) -> _socket.socket:
+    """Open a non-blocking raw CAN socket."""
+    s = _socket.socket(_socket.AF_CAN, _socket.SOCK_RAW, _socket.CAN_RAW)
+    s.setblocking(False)
+    s.bind((channel,))
+    return s
+
+
+def _raw_send(sock: _socket.socket, arb_id: int, data: bytes) -> bool:
+    """Send one CAN frame; returns False if buffer full (non-fatal)."""
+    payload = data.ljust(8, b'\x00')[:8]
+    frame = _CAN_FRAME.pack(arb_id, len(data), payload)
     try:
-        bus.send(msg)
+        sock.send(frame)
         return True
-    except (can.CanOperationError, OSError):
+    except BlockingIOError:
+        return False   # TX queue full — skip this frame
+    except OSError:
         return False
 
 
 async def task_normal(bus: can.Bus) -> None:
-    """Three periodic messages at their correct rates."""
+    """Three periodic messages using a non-blocking raw socket."""
+    sock = _make_socket(bus.channel)
     now = time.monotonic()
     t_engine = now + 0.010
     t_trans  = now + 0.020
     t_body   = now + 0.030
     sent = 0
-    while True:
-        now = time.monotonic()
-        if now >= t_engine:
-            t_engine = now + 0.010
-            ok = await asyncio.to_thread(_send, bus,
-                can.Message(arbitration_id=0x100, data=make_engine(
-                    speed_rpm=random.uniform(800, 3000),
-                    throttle_pct=random.uniform(5, 40)),
-                    is_extended_id=False))
-            if ok:
-                sent += 1
-                if sent % 50 == 0:
-                    print(f"[normal] {sent} frames sent", flush=True)
-        if now >= t_trans:
-            t_trans = now + 0.050
-            await asyncio.to_thread(_send, bus,
-                can.Message(arbitration_id=0x200, data=make_trans(
-                    gear=3, speed_kmh=random.uniform(50, 80)),
-                    is_extended_id=False))
-        if now >= t_body:
-            t_body = now + 0.100
-            await asyncio.to_thread(_send, bus,
-                can.Message(arbitration_id=0x300, data=make_body(),
-                    is_extended_id=False))
-        await asyncio.sleep(0.005)
+    try:
+        while True:
+            now = time.monotonic()
+            if now >= t_engine:
+                t_engine = now + 0.010
+                data = make_engine(speed_rpm=random.uniform(800, 3000),
+                                   throttle_pct=random.uniform(5, 40))
+                if _raw_send(sock, 0x100, data):
+                    sent += 1
+                    if sent % 50 == 0:
+                        print(f"[normal] {sent} frames sent", flush=True)
+            if now >= t_trans:
+                t_trans = now + 0.050
+                _raw_send(sock, 0x200, make_trans(gear=3,
+                          speed_kmh=random.uniform(50, 80)))
+            if now >= t_body:
+                t_body = now + 0.100
+                _raw_send(sock, 0x300, make_body())
+            await asyncio.sleep(0.005)
+    finally:
+        sock.close()
 
 
 async def task_babble(bus: can.Bus) -> None:
