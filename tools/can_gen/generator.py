@@ -150,29 +150,36 @@ async def task_normal(bus: can.Bus) -> None:
     """Three periodic messages using a non-blocking raw socket."""
     sock = _make_socket(bus.channel)
     now = time.monotonic()
-    t_engine = now + 0.010
-    t_trans  = now + 0.020
-    t_body   = now + 0.030
+    t_engine = now + 0.050   # first frame after 50ms — let bus settle
+    t_trans  = now + 0.100
+    t_body   = now + 0.150
+    t_last_send = 0.0        # enforce minimum 15ms between any two sends
     sent = 0
     try:
         while True:
             now = time.monotonic()
-            if now >= t_engine:
+            sent_this_iter = False
+            if now >= t_engine and (now - t_last_send) >= 0.015:
                 t_engine = now + 0.010
                 data = make_engine(speed_rpm=random.uniform(800, 3000),
                                    throttle_pct=random.uniform(5, 40))
                 if _raw_send(sock, 0x100, data):
                     sent += 1
+                    t_last_send = now
+                    sent_this_iter = True
                     if sent % 50 == 0:
                         print(f"[normal] {sent} frames sent", flush=True)
-            if now >= t_trans:
+            if not sent_this_iter and now >= t_trans and (now - t_last_send) >= 0.015:
                 t_trans = now + 0.050
-                _raw_send(sock, 0x200, make_trans(gear=3,
-                          speed_kmh=random.uniform(50, 80)))
-            if now >= t_body:
+                if _raw_send(sock, 0x200, make_trans(gear=3,
+                             speed_kmh=random.uniform(50, 80))):
+                    t_last_send = now
+                    sent_this_iter = True
+            if not sent_this_iter and now >= t_body and (now - t_last_send) >= 0.015:
                 t_body = now + 0.100
-                _raw_send(sock, 0x300, make_body())
-            await asyncio.sleep(0.005)
+                if _raw_send(sock, 0x300, make_body()):
+                    t_last_send = now
+            await asyncio.sleep(0.010)
     finally:
         sock.close()
 
