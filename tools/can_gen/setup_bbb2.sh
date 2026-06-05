@@ -67,7 +67,7 @@ echo can > /sys/devices/platform/ocp/ocp:P9_20_pinmux/state
 echo can > /sys/devices/platform/ocp/ocp:P9_19_pinmux/state
 
 ip link set can0 down 2>/dev/null || true
-ip link set can0 type can bitrate 500000 berr-reporting on
+ip link set can0 type can bitrate 500000 listen-only off berr-reporting on
 ip link set can0 up
 echo "can0: $(ip link show can0 | grep state)"
 
