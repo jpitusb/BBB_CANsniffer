@@ -23,6 +23,8 @@ case "$MODE" in
         ip link set can0 type can bitrate $BITRATE listen-only on berr-reporting on
         ip link set can0 up
         echo "can0 → listen-only mode (passive sniffer)"
+        # Restart the sniffer service if it was stopped
+        systemctl start can-sniffer.service 2>/dev/null && echo "can-sniffer service started" || true
         ;;
     *)
         echo "Usage: $0 [listen|normal]"
