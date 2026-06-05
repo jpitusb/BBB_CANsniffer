@@ -120,27 +120,37 @@ def make_body(lights: int = 1, doors: int = 0) -> bytes:
 
 async def task_normal(bus: can.Bus) -> None:
     """Three periodic messages at their correct rates."""
-    t_engine = t_trans = t_body = time.monotonic()
+    now = time.monotonic()
+    # Stagger initial send times so all three don't fire at once
+    t_engine = now + 0.010
+    t_trans  = now + 0.020
+    t_body   = now + 0.030
     while True:
         now = time.monotonic()
-        try:
-            if now >= t_engine:
+        if now >= t_engine:
+            t_engine = now + 0.010   # advance first — prevents backlog on error
+            try:
                 bus.send(can.Message(arbitration_id=0x100, data=make_engine(
                     speed_rpm=random.uniform(800, 3000),
                     throttle_pct=random.uniform(5, 40)),
                     is_extended_id=False))
-                t_engine = now + 0.010
-            if now >= t_trans:
+            except can.CanOperationError:
+                await asyncio.sleep(0.05)
+        if now >= t_trans:
+            t_trans = now + 0.050
+            try:
                 bus.send(can.Message(arbitration_id=0x200, data=make_trans(
                     gear=3, speed_kmh=random.uniform(50, 80)),
                     is_extended_id=False))
-                t_trans = now + 0.050
-            if now >= t_body:
+            except can.CanOperationError:
+                pass
+        if now >= t_body:
+            t_body = now + 0.100
+            try:
                 bus.send(can.Message(arbitration_id=0x300, data=make_body(),
                     is_extended_id=False))
-                t_body = now + 0.100
-        except can.CanOperationError:
-            await asyncio.sleep(0.1)   # brief back-off on TX error
+            except can.CanOperationError:
+                pass
         await asyncio.sleep(0.001)
 
 
