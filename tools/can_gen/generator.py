@@ -129,6 +129,9 @@ def _cansend(channel: str, arb_id: int, data: bytes) -> bool:
         ["cansend", channel, frame_str],
         capture_output=True, timeout=0.5
     )
+    # cansend exits 0 even on ENOBUFS; treat any stderr as failure
+    if result.stderr:
+        return False
     return result.returncode == 0
 
 
