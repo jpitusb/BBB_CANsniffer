@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define FAULT_SHM_MAGIC      0xFAUL7123U
+#define FAULT_SHM_MAGIC      0xFA017123U
 #define FAULT_SHM_PHYS_ADDR  0x9F000000U
 #define FAULT_SHM_SIZE       0x1000U     /* 4 KB */
 
