@@ -118,40 +118,47 @@ def make_body(lights: int = 1, doors: int = 0) -> bytes:
 
 # ── Scenario tasks ──────────────────────────────────────────────────────────
 
+def _send(bus: can.Bus, msg: can.Message) -> bool:
+    """Thread-safe blocking send; returns True on success."""
+    try:
+        bus.send(msg)
+        return True
+    except (can.CanOperationError, OSError):
+        return False
+
+
 async def task_normal(bus: can.Bus) -> None:
     """Three periodic messages at their correct rates."""
     now = time.monotonic()
-    # Stagger initial send times so all three don't fire at once
     t_engine = now + 0.010
     t_trans  = now + 0.020
     t_body   = now + 0.030
+    sent = 0
     while True:
         now = time.monotonic()
         if now >= t_engine:
-            t_engine = now + 0.010   # advance first — prevents backlog on error
-            try:
-                bus.send(can.Message(arbitration_id=0x100, data=make_engine(
+            t_engine = now + 0.010
+            ok = await asyncio.to_thread(_send, bus,
+                can.Message(arbitration_id=0x100, data=make_engine(
                     speed_rpm=random.uniform(800, 3000),
                     throttle_pct=random.uniform(5, 40)),
                     is_extended_id=False))
-            except can.CanOperationError:
-                await asyncio.sleep(0.05)
+            if ok:
+                sent += 1
+                if sent % 50 == 0:
+                    print(f"[normal] {sent} frames sent", flush=True)
         if now >= t_trans:
             t_trans = now + 0.050
-            try:
-                bus.send(can.Message(arbitration_id=0x200, data=make_trans(
+            await asyncio.to_thread(_send, bus,
+                can.Message(arbitration_id=0x200, data=make_trans(
                     gear=3, speed_kmh=random.uniform(50, 80)),
                     is_extended_id=False))
-            except can.CanOperationError:
-                pass
         if now >= t_body:
             t_body = now + 0.100
-            try:
-                bus.send(can.Message(arbitration_id=0x300, data=make_body(),
+            await asyncio.to_thread(_send, bus,
+                can.Message(arbitration_id=0x300, data=make_body(),
                     is_extended_id=False))
-            except can.CanOperationError:
-                pass
-        await asyncio.sleep(0.001)
+        await asyncio.sleep(0.005)
 
 
 async def task_babble(bus: can.Bus) -> None:
