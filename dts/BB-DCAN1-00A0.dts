@@ -1,9 +1,6 @@
 /dts-v1/;
 /plugin/;
 
-#include <dt-bindings/board/am335x-bbw-bbb-base.h>
-#include <dt-bindings/pinctrl/am33xx.h>
-
 / {
     compatible = "ti,beaglebone", "ti,beaglebone-black";
     part-number = "BB-DCAN1";
@@ -11,14 +8,19 @@
 
     exclusive-use = "P9.24", "P9.26", "dcan1";
 
-    /* Override DCAN1 pinctrl with a zero-pin stub so the driver probes
-       without claiming P9.24/P9.26 from the cape manager.
-       setup_can.sh sets pin states via sysfs after can1 up. */
+    /* Override DCAN1's base-DTB pinctrl-0 (dcan1_pins_s0, which claims
+       P9.24/P9.26) with a one-pin stub referencing conf_xdma_event_intr0
+       (offset 0x200 from pinctrl-single base = pin 128). That pin is
+       genuinely MUX UNCLAIMED on BBB and safe to hold in GPIO mode.
+       The cape manager's ownership of P9.24/P9.26 is left untouched;
+       setup_can.sh sets them to "can" mode via sysfs after can1 up. */
     fragment@0 {
         target = <&am33xx_pinmux>;
         __overlay__ {
             bb_dcan1_stub: pinmux_bb_dcan1_stub {
-                /* no pins — prevents the driver from claiming any mux pins */
+                pinctrl-single,pins = <
+                    0x200 0x37  /* conf_xdma_event_intr0: mode7 GPIO, no-op */
+                >;
             };
         };
     };
