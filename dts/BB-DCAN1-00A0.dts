@@ -1,0 +1,37 @@
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/board/am335x-bbw-bbb-base.h>
+#include <dt-bindings/pinctrl/am33xx.h>
+
+/ {
+    compatible = "ti,beaglebone", "ti,beaglebone-black";
+    part-number = "BB-DCAN1";
+    version = "00A0";
+
+    exclusive-use = "P9.24", "P9.26", "dcan1";
+
+    /* Pinmux definition only — NOT bound to dcan1 node to avoid
+       conflict with the cape manager's ocp:P9_XX_pinmux ownership.
+       setup_can.sh sets pin states via sysfs after can1 up. */
+    fragment@0 {
+        target = <&am33xx_pinmux>;
+        __overlay__ {
+            bb_dcan1_pins: pinmux_bb_dcan1_pins {
+                pinctrl-single,pins = <
+                    /* P9.26  DCAN1_TX  mode 2  output */
+                    BONE_P9_26 (PIN_OUTPUT | MUX_MODE2)
+                    /* P9.24  DCAN1_RX  mode 2  input  pull-up */
+                    BONE_P9_24 (PIN_INPUT_PULLUP | MUX_MODE2)
+                >;
+            };
+        };
+    };
+
+    fragment@1 {
+        target = <&dcan1>;
+        __overlay__ {
+            status = "okay";
+        };
+    };
+};

@@ -10,7 +10,7 @@ from .models import BusState
 class TecRecPoller:
     """Polls `ip -j -d link show <iface>` at 1 Hz for TEC, REC, and bus state."""
 
-    def __init__(self, interface: str = "can0", interval_s: float = 1.0) -> None:
+    def __init__(self, interface: str = "can1", interval_s: float = 1.0) -> None:
         self._iface    = interface
         self._interval = interval_s
         self.tec:   int = 0

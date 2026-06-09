@@ -3,7 +3,7 @@
 # Run as root after cloning the repo to /opt/can_sniffer.
 #
 # Both BBB #1 (sniffer) and BBB #2 (generator) use the same CAN pins:
-#   P9.19 (RX) / P9.20 (TX)  →  can0
+#   P9.24 (RX) / P9.26 (TX)  →  can1  (DCAN1)
 #
 # Wiring for BBB #2:
 #   SN65HVD230 RXD  → P9.19 (CAN RX, direct)
@@ -61,17 +61,18 @@ echo start > "$RPROC/state"
 sleep 1
 echo "PRU state: $(cat $RPROC/state)"
 
-# 6. Bring up can0 in normal mode (transmitter)
-# P9.24/P9.26 (DCAN0) are already in CAN mode by default in the base DTB — no pin mux needed.
-
-ip link set can0 down 2>/dev/null || true
-ip link set can0 type can bitrate 500000 listen-only off berr-reporting on
-ip link set can0 up
-echo "can0: $(ip link show can0 | grep state)"
+# 6. Bring up can1 in normal mode (transmitter), then set P9.24/P9.26 to CAN mode.
+# DCAN1 overlay has no pinctrl-0, so the driver never touches these pins.
+ip link set can1 down 2>/dev/null || true
+ip link set can1 type can bitrate 500000 listen-only off berr-reporting on restart-ms 100
+ip link set can1 up
+echo can > /sys/devices/platform/ocp/ocp:P9_26_pinmux/state
+echo can > /sys/devices/platform/ocp/ocp:P9_24_pinmux/state
+echo "can1: $(ip link show can1 | grep state)"
 
 echo ""
 echo "=== Setup complete ==="
-echo "Run the traffic generator (uses can0 by default):"
+echo "Run the traffic generator (uses can1 by default):"
 echo "  sudo python3 $REPO/tools/can_gen/generator.py --list"
 echo "  sudo python3 $REPO/tools/can_gen/generator.py -s normal --loop"
 echo "  sudo python3 $REPO/tools/can_gen/generator.py -s normal -s babble -s glitch_burst --loop"

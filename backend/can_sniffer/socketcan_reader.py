@@ -5,7 +5,7 @@ import can
 
 
 class SocketCanReader:
-    def __init__(self, channel: str = "can0", bitrate: int = 500_000) -> None:
+    def __init__(self, channel: str = "can1", bitrate: int = 500_000) -> None:
         self._bus = can.interface.Bus(
             channel=channel,
             interface="socketcan",
