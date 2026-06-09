@@ -32,6 +32,10 @@
         target = <&dcan1>;
         __overlay__ {
             status = "okay";
+            /* Remove base-DTB pinctrl so the driver doesn't try to claim
+               P9.24/P9.26 — pins are set via sysfs in setup_can.sh instead. */
+            /delete-property/ pinctrl-0;
+            /delete-property/ pinctrl-names;
         };
     };
 };
