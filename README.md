@@ -70,6 +70,39 @@ sudo python3 /opt/can_sniffer/tools/can_gen/generator.py --list
 sudo python3 /opt/can_sniffer/tools/can_gen/generator.py -s normal --loop
 ```
 
+### After every reboot — two-board test setup
+
+BBB #1 boots into **listen-only** mode (passive sniffer, no ACKs). For BBB #2's frames
+to transmit cleanly, BBB #1 must ACK them. Switch it to normal mode before running the
+generator, then back to listen-only when done.
+
+**BBB #1:**
+```bash
+# Switch to normal mode so it ACKs BBB #2's frames
+# (stops the service, reconfigures can1, restarts the service)
+sudo systemctl stop can-sniffer
+sudo bash /opt/can_sniffer/scripts/setup_can_mode.sh normal
+sudo systemctl start can-sniffer
+```
+
+**BBB #2:**
+```bash
+# Bring up can1 and start generating
+sudo bash /opt/can_sniffer/scripts/setup_can_mode.sh normal
+sudo python3 /opt/can_sniffer/tools/can_gen/generator.py -s normal --loop
+```
+
+When finished, restore BBB #1 to passive sniffer mode:
+```bash
+# On BBB #1 — setup_can_mode.sh listen restarts the service automatically
+sudo systemctl stop can-sniffer
+sudo bash /opt/can_sniffer/scripts/setup_can_mode.sh listen
+```
+
+> **Why stop the service first?** `can-sniffer.service` holds the `can1` socket open.
+> `ip link set can1 down` fails while the socket is held, so the mode switch is blocked
+> unless the service is stopped first.
+
 ---
 
 ## Architecture
