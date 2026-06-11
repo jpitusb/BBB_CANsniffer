@@ -117,15 +117,15 @@
     return [
       {
         stroke: C.dim,
-        grid:   { stroke: C.border, width: 1 },
-        ticks:  { stroke: C.border },
-        font:   "11px Fira Mono, monospace",
+        grid:   { stroke: "#444450", width: 1 },
+        ticks:  { stroke: "#444450" },
+        font:   "11px monospace",
       },
       {
         stroke: C.dim,
-        grid:   { stroke: C.border, width: 1 },
-        ticks:  { stroke: C.border },
-        font:   "11px Fira Mono, monospace",
+        grid:   { stroke: "#444450", width: 1 },
+        ticks:  { stroke: "#444450" },
+        font:   "11px monospace",
       },
     ];
   }
@@ -152,10 +152,10 @@
     const [ts, vs] = ringToUplot(rings.busLoad, nowTs);
     charts.busLoad = new uPlot(
       {
-        title:   "Bus Load %",
+        title:   "",
         width:   w,
         height:  160,
-        padding: [8, 12, 0, 0],
+        padding: [4, 10, 30, 50],
         legend:  { show: true },
         cursor:  { show: false },
         scales:  { x: { time: true }, y: { range: [0, 100] } },
@@ -186,10 +186,10 @@
     const [, recVs]   = ringToUplot(rings.rec, nowTs);
     charts.tecRec = new uPlot(
       {
-        title:   "TEC / REC",
+        title:   "",
         width:   w,
         height:  160,
-        padding: [8, 12, 0, 0],
+        padding: [4, 10, 30, 50],
         legend:  { show: true },
         cursor:  { show: false },
         scales:  { x: { time: true } },
@@ -215,10 +215,10 @@
     const [ts, vs] = ringToUplot(rings.errRate, nowTs);
     charts.errRate = new uPlot(
       {
-        title:   "Error Frames / sec",
+        title:   "",
         width:   w,
         height:  160,
-        padding: [8, 12, 0, 0],
+        padding: [4, 10, 30, 50],
         legend:  { show: true },
         cursor:  { show: false },
         scales:  { x: { time: true } },
@@ -267,10 +267,10 @@
     uData[0] = tsFinal || [Math.floor(Date.now() / 1000)];
     charts.latency = new uPlot(
       {
-        title:   "Latency mean (µs)",
+        title:   "",
         width:   w,
         height:  180,
-        padding: [8, 12, 0, 0],
+        padding: [4, 10, 30, 50],
         legend:  { show: true },
         cursor:  { show: false },
         scales:  { x: { time: true } },
@@ -316,10 +316,10 @@
     const w = containerWidth(el);
     charts.pruHist = new uPlot(
       {
-        title:   "PRU vs Kernel Δ (µs)",
+        title:   "",
         width:   w,
         height:  160,
-        padding: [8, 12, 0, 0],
+        padding: [4, 10, 30, 50],
         legend:  { show: true },
         cursor:  { show: false },
         scales:  { x: { time: false }, y: {} },
@@ -351,10 +351,10 @@
     const w = containerWidth(el);
     charts.idHist = new uPlot(
       {
-        title:   `ID ${histSelectedId} Interval (µs)`,
+        title:   "",
         width:   w,
         height:  160,
-        padding: [8, 12, 0, 0],
+        padding: [4, 10, 30, 50],
         legend:  { show: true },
         cursor:  { show: false },
         scales:  { x: { time: false }, y: {} },

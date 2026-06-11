@@ -155,7 +155,7 @@ function renderTable() {
     const tr = document.createElement("tr");
     tr.style.background = `hsla(${f._hue},30%,18%,0.5)`;
     tr.innerHTML =
-      `<td>${f.pru_ts_ns ?? f.kernel_ts.toFixed(6)}</td>` +
+      `<td>${f.pru_ts_ns ?? "—"}</td>` +
       `<td>${f.arb_id}</td>` +
       `<td>${f.dlc}</td>` +
       `<td>${f.data}</td>` +
