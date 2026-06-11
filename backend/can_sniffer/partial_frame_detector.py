@@ -43,21 +43,27 @@ class PartialFrameDetector:
         if self._pending:
             self._pending.popleft()
 
+    def sweep_timeouts(self) -> None:
+        """Fire AbortedFrameEvents for any pending SOF older than the timeout.
+        Synchronous so it can be called from the coalesced ingest loop instead
+        of running its own polling task."""
+        now = time.monotonic()
+        while self._pending:
+            oldest = self._pending[0]
+            if now - oldest.wall_time > self._timeout_s:
+                self._pending.popleft()
+                evt = AbortedFrameEvent(
+                    pru_ts_ns = oldest.event.t_fall_ns,
+                    wall_time = oldest.wall_time,
+                )
+                for cb in self._callbacks:
+                    cb(evt)
+            else:
+                break
+
     async def run(self) -> None:
+        # Retained for standalone use; the server now calls sweep_timeouts()
+        # from the coalesced ingest loop rather than scheduling this task.
         while True:
-            now = time.monotonic()
-            while self._pending:
-                oldest = self._pending[0]
-                if now - oldest.wall_time > self._timeout_s:
-                    self._pending.popleft()
-                    evt = AbortedFrameEvent(
-                        pru_ts_ns = oldest.event.t_fall_ns,
-                        wall_time = oldest.wall_time,
-                    )
-                    for cb in self._callbacks:
-                        cb(evt)
-                else:
-                    break
-            await asyncio.sleep(0.01)   # 10 ms: abort detection has a 5 ms
-                                        # timeout anyway, so 100 Hz scanning is
-                                        # ample and cuts event-loop wakeups 10x.
+            self.sweep_timeouts()
+            await asyncio.sleep(0.01)

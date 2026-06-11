@@ -72,10 +72,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pfd.add_callback(_diag.ingest_abort)
 
     tasks = [
-        asyncio.create_task(_pru_reader_loop(pru, correlator, pfd)),
+        asyncio.create_task(_ingest_loop(pru, correlator, pfd)),
         asyncio.create_task(_can_reader_loop(reader, correlator)),
-        asyncio.create_task(_drain_loop(correlator, pfd)),
-        asyncio.create_task(pfd.run()),
         asyncio.create_task(tec_rec.run()),
         asyncio.create_task(_timeout_loop()),
         asyncio.create_task(_logger.run()),
@@ -133,17 +131,39 @@ async def ws_endpoint(websocket: WebSocket) -> None:
         pass
 
 
-async def _pru_reader_loop(pru: PruShm, correlator: Correlator,
-                           pfd: PartialFrameDetector) -> None:
+async def _ingest_loop(pru: PruShm, correlator: Correlator,
+                       pfd: PartialFrameDetector) -> None:
+    """Coalesced PRU-drain + matched-frame-drain + abort sweep.
+
+    Replaces three separate polling tasks (PRU reader, drain loop, pfd.run)
+    with one loop, cutting event-loop wakeups ~10x (the dominant CPU cost on
+    the single-core ARM).
+
+    Safe at 20 ms because the PRU writes each SOF to DDR at frame *start*,
+    before the kernel delivers the CAN frame to userspace — so the matching
+    PRU event is already queued when a frame arrives, and _try_match (run on
+    PRU ingest) fires before drain_matched's stale-flush in the same
+    iteration. Correlation uses timestamps, not queue residence time, so the
+    longer interval only delays dashboard display by <=20 ms.
+    """
     while True:
         for event in pru.drain():
             correlator.ingest_pru(event)
             pfd.ingest_pru(event)
             _diag.ingest_pru_event(event)
             _logger.log_pru_event(event)
-        await asyncio.sleep(0.005)  # 5 ms: drain() batches, so 200 Hz polling
-                                    # loses almost no latency vs 1 ms (1000 Hz)
-                                    # while cutting event-loop wakeups 5x.
+        for frame in correlator.drain_matched():
+            if frame.pru_ts_ns is not None:
+                pfd.mark_matched()
+            _frame_store.append(frame)
+            _bus_load.record(frame)
+            _diag.ingest_frame(frame)
+            _logger.log_frame(frame)
+            _timing.ingest(frame)
+            _latency.ingest(frame)
+            _trigger.ingest(frame, _bus_load.current())
+        pfd.sweep_timeouts()
+        await asyncio.sleep(0.02)
 
 
 async def _can_reader_loop(reader: SocketCanReader, correlator: Correlator) -> None:
@@ -158,21 +178,6 @@ async def _can_reader_loop(reader: SocketCanReader, correlator: Correlator) -> N
                     _logger.log_error(err)
             else:
                 correlator.ingest_frame(msg)
-
-
-async def _drain_loop(correlator: Correlator, pfd: PartialFrameDetector) -> None:
-    while True:
-        for frame in correlator.drain_matched():
-            if frame.pru_ts_ns is not None:
-                pfd.mark_matched()
-            _frame_store.append(frame)
-            _bus_load.record(frame)
-            _diag.ingest_frame(frame)
-            _logger.log_frame(frame)
-            _timing.ingest(frame)
-            _latency.ingest(frame)
-            _trigger.ingest(frame, _bus_load.current())
-        await asyncio.sleep(0.005)
 
 
 async def _capture_logger_loop() -> None:
