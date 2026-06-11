@@ -135,14 +135,14 @@ for off, mask, label in REGS:
         mm = mmap.mmap(f.fileno(), pg_sz, offset=pg)
         v = struct.unpack_from('<I', mm, pg_off)[0]
         struct.pack_into('<I', mm, pg_off, v | mask)
-        mm.flush()
+        # No mm.flush(): msync() returns EINVAL on /dev/mem device mappings.
+        # pack_into writes directly to physical hardware — no writeback needed.
 
 # EISR: enable event 24 (write index, not bitmask)
 with open('/dev/mem', 'r+b') as f:
     mm = mmap.mmap(f.fileno(), 0x100, offset=BASE)
     struct.pack_into('<I', mm, 0x28, 24)   # EISR = 24
     struct.pack_into('<I', mm, 0x34, 0)    # HIEISR = 0 (host int 0)
-    mm.flush()
 
 print("PRUSS INTC armed: event24→ch0→hostint0→R31[30]")
 PYEOF
