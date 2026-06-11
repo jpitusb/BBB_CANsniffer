@@ -40,7 +40,9 @@ class PruShm:
                 f"PRU SHM magic mismatch: 0x{magic:08X} (expected 0x{PRU_SHM_MAGIC:08X}); "
                 "firmware may not be running or OCP not pre-enabled"
             )
-        self._read_idx: int = 0
+        # Start reading from the current write position so we don't replay all
+        # historical events (which would exhaust RAM on a long-running PRU).
+        self._read_idx: int = self._write_idx()
         self.epoch_offset_ns: int = self._calibrate()
 
     # ------------------------------------------------------------------
