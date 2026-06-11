@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "can-sniffer"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.7"
 dependencies = [
-    "python-can>=4.3",
-    "fastapi>=0.111",
-    "uvicorn>=0.29",
-    "websockets>=12",
-    "cantools>=40.0",
-    "aiosqlite>=0.20",
+    "python-can>=3.3",
+    "fastapi",
+    "uvicorn>=0.20",
+    "websockets>=10",
+    "cantools>=20.0",
+    "aiosqlite>=0.17",
 ]
 
 [project.optional-dependencies]

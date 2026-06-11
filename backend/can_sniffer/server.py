@@ -141,8 +141,10 @@ async def _pru_reader_loop(pru: PruShm, correlator: Correlator,
 
 
 async def _can_reader_loop(reader: SocketCanReader, correlator: Correlator) -> None:
+    _loop = asyncio.get_event_loop()
     while True:
-        msg = await asyncio.to_thread(reader.recv_one)
+        # asyncio.to_thread added in 3.9; use run_in_executor for Python 3.7 compat
+        msg = await _loop.run_in_executor(None, reader.recv_one)
         if msg is not None:
             if msg.is_error_frame:
                 err = _diag.ingest_error_frame(msg)

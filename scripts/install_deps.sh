@@ -24,15 +24,26 @@ apt-get install -y \
     can-utils \
     python3-pip \
     device-tree-compiler \
-    gcc-pru binutils-pru ti-pru-software-v6.3
+    gcc-pru binutils-pru
+# PRU software support package name differs by distro
+apt-get install -y ti-pru-software-v6.3 2>/dev/null || \
+    apt-get install -y pru-software-support-package
 
 # ── Python dependencies ───────────────────────────────────────────────────────
-sudo -u "$REAL_USER" pip3 install --break-system-packages --upgrade pip setuptools
-sudo -u "$REAL_USER" pip3 install --break-system-packages "$REPO/backend"
+# --break-system-packages was added in pip 22+ (PEP 668); older pip (Buster) ignores it
+PIP_MAJOR=$(pip3 --version 2>/dev/null | grep -oP '(?<=pip )\d+' | head -1)
+PIP_FLAGS=""
+[ "${PIP_MAJOR:-0}" -ge 22 ] && PIP_FLAGS="--break-system-packages"
+sudo -u "$REAL_USER" pip3 install $PIP_FLAGS --upgrade pip setuptools
+sudo -u "$REAL_USER" pip3 install $PIP_FLAGS "$REPO/backend"
 
 # ── Build PRU timestamp firmware ─────────────────────────────────────────────
 echo "Building PRU timestamp firmware..."
-make -C "$REPO/pru/pru0_timestamp" clean all
+# Auto-detect PRU software support package path (differs between distros)
+PRUSS_SDK=$(find /usr/lib/ti -maxdepth 1 -name "pru-software-support-package*" -type d 2>/dev/null | sort -r | head -1)
+[ -z "$PRUSS_SDK" ] && PRUSS_SDK=/usr/lib/ti/pru-software-support-package-v6.3
+echo "  Using PRUSS SDK: $PRUSS_SDK"
+make -C "$REPO/pru/pru0_timestamp" clean all PRUSS_SDK="$PRUSS_SDK"
 cp "$REPO/pru/pru0_timestamp/am335x-pru0-fw" /lib/firmware/
 
 # ── Build PRU fault-inject firmware (for BBB #2; harmless to build on BBB #1)
@@ -49,8 +60,9 @@ cp "$REPO/dts/BB-PRU0-CAN-TS-00A0.dtbo" /lib/firmware/
 echo "Installing systemd services..."
 chmod +x "$REPO/scripts/setup_pru.sh" "$REPO/scripts/setup_can.sh"
 
-# Patch the service file with the real user's site-packages path
-sed "s|/home/lauren/.local/lib/python3.11/site-packages|${SITE_PACKAGES}|g" \
+# Patch the service file with the real user's site-packages path and Python version
+sed -e "s|/home/lauren/.local/lib/python3.11/site-packages|${SITE_PACKAGES}|g" \
+    -e "s|python3\.11|python${PYVER}|g" \
     "$REPO/systemd/can-sniffer.service" > /etc/systemd/system/can-sniffer.service
 
 cp "$REPO/systemd/pru-loader.service" /etc/systemd/system/

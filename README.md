@@ -8,7 +8,7 @@ Beyond raw frame capture, the sniffer includes a full bus-health diagnostics lay
 
 ## Features
 
-- **Nanosecond hardware timestamps** — PRU0 captures the SOF falling edge via IEP timer (5 ns resolution), independent of Linux scheduler jitter
+- **Nanosecond hardware timestamps** — PRU0 captures the SOF falling edge via IEP timer (1 ns resolution), independent of Linux scheduler jitter
 - **FIFO timestamp correlation** — PRU timestamps are matched to SocketCAN frames in arrival order; frames without a PRU match still flow through
 - **Glitch and noise detection** — PRU classifies dominant pulses shorter than 0.5 bit as `GLITCH` events; bus stuck dominant > 10 bits fires `DOMINANT_RUNAWAY`
 - **Partial frame detection** — PRU SOF events with no matching CAN frame within 5 ms are reported as aborted frames
@@ -29,15 +29,31 @@ Beyond raw frame capture, the sniffer includes a full bus-health diagnostics lay
 
 ### BBB #1 — Sniffer (quick start)
 
-```bash
-# 1. Flash Debian Bookworm IoT image, boot, SSH in as debian/temppwd
+> **Required kernel:** Debian **Buster** (4.19-ti).  The 5.10-ti kernel (Bookworm) sets
+> `PRUSS_CFG.GPCFG0` bit 25 (MII_RT mode), permanently locking `R31[15:0]` to MII_RT
+> signals and preventing direct GPI pin reads.  4.19-ti has the same issue; the firmware
+> works around it via the PRUSS INTC path (GPIO2_7 → system event 24 → R31[30]).
+>
+> Image: `bone-debian-10.x-iot-armhf-YYYY-MM-DD-4gb.img.xz` from
+> `https://rcn-ee.net/rootfs/bb.org/testing/`
 
-# 2. First-time bootstrap — clones repo, patches /boot/uEnv.txt, reboots
+```bash
+# 1. Flash Debian Buster IoT image, boot, SSH in as debian/temppwd
+
+# 2. Fix apt sources (Buster is EOL; standard repos moved to archive)
+sudo bash -c "cat > /etc/apt/sources.list <<'EOF'
+deb http://archive.debian.org/debian buster main contrib non-free
+deb http://archive.debian.org/debian-security buster/updates main
+deb https://repos.rcn-ee.com/debian buster main
+EOF"
+sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys D284E608A4C46402
+
+# 3. First-time bootstrap — clones repo, patches /boot/uEnv.txt, reboots
 curl -sL https://raw.githubusercontent.com/jpitusb/BBB_CANsniffer/master/scripts/bootstrap.sh \
     | sudo bash
 # --- board reboots automatically ---
 
-# 3. After reboot — build and install everything
+# 4. After reboot — build and install everything
 sudo /opt/can_sniffer/scripts/install_deps.sh
 
 # Done. Dashboard is at http://<BBB-IP>:8000/
@@ -49,8 +65,9 @@ Services (`pru-loader` + `can-sniffer`) start automatically on every subsequent 
 > `/opt/can_sniffer`, patches four required lines into `/boot/uEnv.txt` (PRU overlay,
 > disable video cape, disable cape-universal, DDR memmap), and reboots.
 
-> **What install_deps.sh does:** installs apt packages (`gcc-pru`, `can-utils`, etc.),
-> installs Python dependencies, builds the PRU firmware and DTS overlay, installs and
+> **What install_deps.sh does:** auto-detects Python version (3.7 on Buster), installs
+> apt packages (`gcc-pru`, `can-utils`, etc.), installs Python dependencies with
+> appropriate version constraints, builds the PRU firmware and DTS overlay, installs and
 > enables the systemd services.
 
 ### BBB #2 — Traffic / fault generator (quick start)
@@ -103,6 +120,12 @@ sudo bash /opt/can_sniffer/scripts/setup_can_mode.sh listen
 > `ip link set can1 down` fails while the socket is held, so the mode switch is blocked
 > unless the service is stopped first.
 
+> **BBB #2 bus-off recovery:** If BBB #1 was in listen-only mode while BBB #2 was
+> transmitting, BBB #2's TEC climbs to 128 and the interface goes bus-off. Since
+> `setup_can_mode.sh` does not set `restart-ms`, the interface stays bus-off until
+> manually reset. Re-run `setup_can_mode.sh normal` on BBB #2 — it brings `can1` down
+> and back up cleanly.
+
 ---
 
 ## Architecture
@@ -113,11 +136,16 @@ CAN Bus
   ▼
 SN65HVD230 transceiver (3.3 V)
   │             │
-  │ (CAN RX)    │ (GPIO shadow)
+  │ (CAN RX)    │ (GPIO edge via 1 kΩ)
   ▼             ▼
-P9.24         P8.45
+P9.24         P8.46 (GPIO2_7)
   │             │
-can0          PRU0 (IEP timer)
+can1          GPIO2 bank-A interrupt
+(kernel)      │
+  │           ▼
+  │     PRUSS INTC sysevt 24 → R31[30]
+  │           │
+  │     PRU0 (IEP timer @ 1 ns/tick)
 (kernel)      │
   │           │  DDR ring buffer @ 0x9F000000
   ▼           ▼        (256 × 16-byte event slots, 24-byte header)
@@ -132,7 +160,7 @@ SocketCAN   pru_shm.py (/dev/mem mmap)
         └──► diagnostics_aggregator.py
                ├── signal_quality_monitor.py  (glitch/abort)
                ├── error_decoder.py           (SocketCAN error frames)
-               ├── tec_rec_poller.py          (ip link, 1 Hz)
+               ├── tec_rec_poller.py          (ip link show can1, 1 Hz)
                ├── behavioral_monitor.py      (DBC, cycle times, signals)
                └── alert_manager.py           (dedup, cooldowns)
                         │
@@ -149,9 +177,15 @@ SocketCAN   pru_shm.py (/dev/mem mmap)
 
 | Type | Value | Meaning |
 |------|-------|---------|
-| `SOF` | `0x01` | Valid start-of-frame edge; matched to SocketCAN frame |
-| `GLITCH` | `0x02` | Dominant pulse < 1000 ns (0.5 bit at 500 kbit/s); electrical noise |
-| `DOMINANT_RUNAWAY` | `0x03` | Bus stuck dominant > 20 µs (10 bits); likely cable fault |
+| `SOF` | `0x01` | CAN dominant falling edge captured via GPIO2 interrupt → PRUSS INTC |
+| `GLITCH` | `0x02` | *(not generated by INTC firmware — only by legacy direct-GPI firmware)* |
+| `DOMINANT_RUNAWAY` | `0x03` | *(not generated by INTC firmware)* |
+
+> **Note:** The INTC-based firmware only generates `SOF` events.  `GLITCH` and
+> `DOMINANT_RUNAWAY` classification required continuous pin sampling via `R31[15:0]`,
+> which is unavailable because `PRUSS_CFG.GPCFG0` bit 25 is permanently set by the
+> 4.19-ti kernel, locking all GPI bits to MII_RT mode.  R31[30] (PRUSS INTC host
+> interrupt 0) bypasses this lock.  See [Known Limitations](#known-limitations).
 
 ---
 
@@ -163,7 +197,7 @@ SocketCAN   pru_shm.py (/dev/mem mmap)
 |-----|------|---------|------|
 | 1 | BeagleBone Black Rev C | AM335x SoC, 2× PRU, 2× DCAN | $55 |
 | 1 | SN65HVD230 CAN transceiver module | 3.3 V native — preferred over TJA1050 | $3 |
-| 1 | MicroSD 8 GB Class 10 | Debian Bookworm IoT image (or flash eMMC directly) | $8 |
+| 1 | MicroSD 8 GB Class 10 | Debian Buster IoT image with 4.19-ti kernel (or flash eMMC directly) | $8 |
 | 1 | 5 V / 2 A supply | BBB power | $8 |
 | 1 | DB9 female connector | CAN bus physical interface | $2 |
 | 2 | 120 Ω 1/4 W resistor | Bus termination (one per bus end) | $0.50 |
@@ -176,32 +210,35 @@ SocketCAN   pru_shm.py (/dev/mem mmap)
 
 | Signal | BBB Header Pin | Ball | SN65HVD230 Pin | Notes |
 |--------|---------------|------|----------------|-------|
-| CAN TX | P9.26 | A14 | TXD (1) | DCAN0 TX, mux mode 1 |
-| CAN RX | P9.24 | D15 | RXD (4) | DCAN0 RX, mux mode 1 |
-| PRU0 RX shadow | P8.45 | R1 | RXD (4) | Via 1 kΩ to the P9.24/RXD junction — **see note** |
+| CAN TX | P9.26 | A14 | TXD (1) | DCAN1 TX, mux mode 2 |
+| CAN RX | P9.24 | D15 | RXD (4) | DCAN1 RX, mux mode 2 |
+| PRU edge input | **P8.46** | T1 | RXD (4) | Via **1 kΩ** to the P9.24/RXD junction — **see note** |
 | 3.3 V | P9.3 or P9.4 | — | VCC (3) | |
 | GND | P9.1 or P9.2 | — | GND (2) | Common ground |
 | RS pin | — | — | RS (8) | Tie to GND for high-speed mode |
 | CANH | DB9 pin 7 | — | CANH (7) | To bus high |
 | CANL | DB9 pin 2 | — | CANL (6) | To bus low |
 
-> **P8.45 boot conflict — 1 kΩ series resistor required.**
-> P8.45 boots as LCD_DATA0 (push-pull output, mode 0) before the PRU overlay reconfigures
-> it as a high-impedance PRU input (mode 6).  If P8.45 is wired directly to P9.24, the two
-> active drivers fight during boot and the board will not start.
+P8.46 (LCD_DATA1, GPIO2_7) is configured as a GPIO input in the kernel.  Its falling-edge
+interrupt routes through the **PRUSS INTC** to **R31[30]** in PRU0, giving hardware-level
+edge detection without using the GPI path (`R31[15:0]`) which is locked by the kernel.
+
+> **P8.46 boot conflict — 1 kΩ series resistor required.**
+> P8.46 boots as LCD_DATA1 (push-pull output, mode 0) before setup_pru.sh reconfigures
+> it as a GPIO input.  Without the resistor, the BBB output driver fights the CAN
+> transceiver CRXD output during boot.
 >
-> Add a **1 kΩ resistor** in series between P8.45 and the Y-tap node:
+> Add a **1 kΩ resistor** in series between P8.46 and the Y-tap node:
 >
 > ```
-> SN65HVD230 RXD ──┬──── P9.24 (CAN RX)
+> SN65HVD230 RXD ──┬──── P9.24 (CAN RX / DCAN1)
 >                  │
 >                1 kΩ
 >                  │
->                P8.45 (PRU shadow input)
+>                P8.46 (GPIO2_7 — PRUSS INTC edge input)
 > ```
 >
-> The resistor limits the boot-conflict current to 3.3 mA and is transparent at 500 kbit/s
-> (RC ≈ 50 ns with 50 pF node capacitance, well under the 200 ns edge budget).
+> The resistor limits boot-conflict current to ≈ 3 mA and is transparent at 500 kbit/s.
 
 ### BBB #2 — Traffic / Fault Generator Wiring
 
@@ -209,7 +246,7 @@ A second BBB can generate CAN traffic and physical-layer faults for testing. It 
 
 #### Diode combiner circuit (required)
 
-P9.26 (DCAN0 TX) and P8.45 (PRU output) both need to drive the transceiver TXD line. They cannot be tied directly together — a push-pull HIGH output will fight a push-pull LOW output. Use two Schottky diodes in a wired-AND configuration with a pull-up:
+P9.26 (DCAN1 TX) and P8.45 (PRU output) both need to drive the transceiver TXD line. They cannot be tied directly together — a push-pull HIGH output will fight a push-pull LOW output. Use two Schottky diodes in a wired-AND configuration with a pull-up:
 
 ```
 3.3V ──── 4.7 kΩ ────┬──── TXD (SN65HVD230 pin 1)
@@ -281,7 +318,7 @@ BBB_CANsniffer/
 │   │   ├── resource_table.h       # remoteproc resource table (empty — no DDR carveout needed)
 │   │   ├── startup.S              # sets sp before main (gcc-pru requires this)
 │   │   ├── AM335x_PRU0.ld         # linker script (PRUDMEM at 0x0, DDR ring buffer at 0x9F000000)
-│   │   ├── main.c                 # PRU0 IEP timestamp firmware (4-state machine)
+│   │   ├── main.c                 # PRU0 IEP timestamp firmware (GPIO→INTC→R31[30])
 │   │   └── Makefile
 │   ├── pru0_fault_inject/         # BBB #2 fault generator PRU firmware
 │   │   ├── shared_mem.h           # fault modes + DDR command interface
@@ -301,7 +338,7 @@ BBB_CANsniffer/
 │   │   ├── frame_store.py         # Rolling deque of EnrichedFrames
 │   │   ├── bus_load.py            # 1-second sliding window utilization
 │   │   ├── error_decoder.py       # SocketCAN error frame → ErrorEvent
-│   │   ├── tec_rec_poller.py      # `ip -j link show can0` async poller
+│   │   ├── tec_rec_poller.py      # `ip -j link show can1` async poller
 │   │   ├── signal_quality_monitor.py  # Glitch/abort counting, DOMINANT_RUNAWAY
 │   │   ├── behavioral_monitor.py  # DBC-driven per-message state machine
 │   │   ├── alert_manager.py       # Dedup, cooldowns, resolution
@@ -329,8 +366,8 @@ BBB_CANsniffer/
 │   ├── bootstrap.sh               # first-time setup: clone repo, patch uEnv.txt, reboot
 │   ├── install_deps.sh            # post-reboot: apt, pip, build firmware, install services
 │   ├── deploy.sh                  # push local changes to a running BBB and reload
-│   ├── setup_can.sh               # ip link set can0 up type can bitrate N
-│   ├── setup_pru.sh               # P8.45 pin mux + OCP enable + PRU start (every boot)
+│   ├── setup_can.sh               # ip link set can1 up type can bitrate N
+│   ├── setup_pru.sh               # P8.46 GPIO interrupt + PRUSS INTC + OCP enable + PRU start
 │   └── test_can1_tx.sh            # loopback test: can1 → can0 on same board
 ├── tools/
 │   └── can_gen/
@@ -349,22 +386,22 @@ BBB_CANsniffer/
 
 ### Prerequisites
 
-- BeagleBone Black running **Debian 12 Bookworm** (IoT image) from [rcn-ee.net](https://rcn-ee.net/)
-- Kernel `5.10-ti` (verified: `5.10.168-ti-r72`)
-- Python 3.11+ (included in Bookworm)
+- BeagleBone Black running **Debian 10 Buster** (IoT image) from [rcn-ee.net](https://rcn-ee.net/)
+- Kernel `4.19-ti` (verified: `4.19.94-ti-r73`)
+- Python 3.7+ (3.7 included in Buster)
 - A DBC file describing the target CAN network (for behavioral monitoring)
 
 ---
 
 ### Phase 0 — OS Baseline and SocketCAN
 
-**Goal:** `can0` up and receiving real frames from the target bus. No PRU involvement.
+**Goal:** `can1` up and receiving real frames from the target bus. No PRU involvement.
 
-#### 1. Flash Debian Bookworm
+#### 1. Flash Debian Buster
 
 ```bash
-# On your workstation
-xzcat am335x-debian-12.x-iot-armhf-YYYY-MM-DD-4gb.img.xz | dd of=/dev/mmcblkX bs=4M status=progress
+# On your workstation — use a Buster (Debian 10) image with 4.19-ti kernel
+xzcat bone-debian-10.x-iot-armhf-YYYY-MM-DD-4gb.img.xz | dd of=/dev/mmcblkX bs=4M status=progress
 ```
 
 Boot, SSH in (USB: `ssh debian@192.168.7.2`, password `temppwd`), set hostname:
@@ -374,20 +411,25 @@ sudo hostnamectl set-hostname can-sniffer
 echo "127.0.1.1 can-sniffer" | sudo tee -a /etc/hosts
 ```
 
-> **Note:** `can0` and `can1` are present by default in the 5.10-ti image — no device tree overlay needed to enable the CAN controller.
+> **Why Buster, not Bookworm (5.10-ti)?** The 5.10-ti and 4.19-ti kernels both set
+> `PRUSS_CFG.GPCFG0` bit 25, locking `R31[15:0]` to MII_RT mode.  The firmware works
+> around this using the PRUSS INTC path (GPIO2_7 → R31[30]) which is independent of
+> GPCFG0.  Either kernel works; Buster is tested and documented here.
+
+> **Note:** `can0` and `can1` are present by default in the 4.19-ti image — no device tree overlay needed to enable the CAN controller.
 
 #### 2. Bring up the CAN interface
 
 ```bash
 sudo /opt/can_sniffer/scripts/setup_can.sh 500000
-ip -details link show can0
+ip -details link show can1
 # Expected: state UP, bitrate 500000, listen-only in ctrlmodes
 ```
 
 #### 3. Verify frame reception
 
 ```bash
-candump can0
+candump can1
 # Frames should appear within milliseconds of bus traffic
 ```
 
@@ -397,7 +439,8 @@ candump can0
 
 ### Phase 1 — PRU Firmware
 
-**Goal:** PRU0 captures nanosecond SOF timestamps into the DDR ring buffer.
+**Goal:** PRU0 captures nanosecond SOF timestamps into the DDR ring buffer via GPIO edge
+detection through the PRUSS Interrupt Controller.
 
 #### 1. Run bootstrap (first time only)
 
@@ -508,7 +551,7 @@ The frontend is served automatically by the FastAPI backend from `frontend/`. No
 
 ### Phase 4 — PRU1 Bit-Bang CAN (Stretch)
 
-Placeholder firmware in `pru/pru1_bitbang/main.c`. Intended for a second CAN bus channel at ≤ 250 kbit/s using `pr1_pru1_pru_r31_1` (P8.46) and a second SN65HVD230. See roadmap below.
+Placeholder firmware in `pru/pru1_bitbang/main.c`. Intended for a second CAN bus channel at ≤ 250 kbit/s using PRU1 GPI input and a second SN65HVD230. Note: P8.46 is occupied by the GPIO edge detection path for BBB #1; a different pin would need to be selected. See roadmap below.
 
 ---
 
@@ -574,7 +617,7 @@ SocketCAN delivers error frames with the error class bitmask in `arbitration_id`
 | `0x020` | ACK error (no node acknowledged) |
 | `0x040` | Bus-off (TEC ≥ 256) |
 
-TEC and REC are read from `data[6:8]` on controller error frames, and refreshed at 1 Hz via `ip -j -d link show can0` (P9.24/P9.26).
+TEC and REC are read from `data[6:8]` on controller error frames, and refreshed at 1 Hz via `ip -j -d link show can1` (P9.24/P9.26).
 
 ### Behavioral Monitoring (requires DBC)
 
@@ -643,7 +686,7 @@ WHERE severity = 'CRITICAL' ORDER BY ts DESC;
 |----------|---------|-------------|
 | `CAN_SNIFFER_DB` | `/opt/can_sniffer/data/diagnostics.db` | SQLite database path |
 
-Everything else (`can0` interface, 500 kbit/s bitrate, port 8000) is currently hardcoded.
+Everything else (`can1` interface, 500 kbit/s bitrate, port 8000) is currently hardcoded.
 The CAN bitrate thresholds are compiled into the PRU firmware (`shared_mem.h`); change them
 there and rebuild before changing the bitrate passed to `setup_can.sh`.
 
@@ -720,7 +763,7 @@ The bit-timing thresholds in `shared_mem.h` are compiled into the PRU firmware:
 #define IFS_COUNTS              1200U   /* 6000 ns = 3 bits (IFS)           */
 ```
 
-If you change the bus bitrate, recalculate these constants (IEP ticks = time_ns / 5) and rebuild the PRU firmware before restarting. The Python backend reads the bitrate from `CAN_BITRATE` at startup and does not need recompilation.
+If you change the bus bitrate, recalculate these constants (IEP ticks = time_ns / 1, since 1 tick = 1 ns at DEFAULT_INC=5) and rebuild the PRU firmware before restarting. The Python backend reads the bitrate from `CAN_BITRATE` at startup and does not need recompilation.
 
 ### `shared_mem.h` is the cross-language contract
 
@@ -746,7 +789,7 @@ Offset  Size  Field
      1     1  flags      (bit 0: IEP rollover since previous entry)
      2     2  seq        (monotonic uint16, wraps at 65535)
      4     8  t_fall_ns  (uint64 monotonic ns since PRU start; Python adds epoch_offset)
-    12     4  pulse_ns   (dominant pulse width in ns; 0 for SOF)
+    12     4  pulse_ns   (0 for SOF — pulse classification not available with INTC path)
 ```
 
 Python struct: `_HDR_MAGIC_WIDX = struct.Struct("<II")` (reads first 8 bytes), event offset = 24.
@@ -754,7 +797,10 @@ Python struct: `_HDR_MAGIC_WIDX = struct.Struct("<II")` (reads first 8 bytes), e
 > The `_pru_prev_iep` and `_pru_rollover_ns` fields exist because gcc-pru SBBO always
 > uses ARM physical addresses — C static variables at PRUDMEM origin 0x0 hit boot ROM
 > and writes are silently dropped. These fields put rollover state in DDR where SBBO works.
-> See `docs/gcc-pru-on-bbb-lessons.md` for the full explanation.
+>
+> **IEP tick rate:** `DEFAULT_INC = 5` at 200 MHz = 1 ns per tick (1 GHz effective).
+> Rollover: 2³² ticks × 1 ns = ~4.29 s.  `t_fall_ns` accumulates correctly across
+> multiple rollovers via `_pru_rollover_ns`.
 
 ---
 
@@ -805,11 +851,44 @@ A properly wired CAN bus has exactly two 120 Ω termination resistors — one at
 
 ## Known Limitations
 
-- **PRU0 IEP timer rollover:** The AM335x IEP is 32-bit at 200 MHz — it rolls over every ~21.5 s. The PRU firmware tracks rollovers in a local counter; `t_fall_ns` in each ring buffer event is a monotonically increasing uint64. Python adds a one-time epoch offset calibrated at startup. Accuracy degrades by ±50 ppm (AM335x crystal tolerance) over time; restart the backend to recalibrate.
-- **SocketCAN error frames do not report CRC errors as a dedicated class:** CRC errors are inferred from `data[3]` (protocol violation location byte) when `CAN_ERR_PROT` is set. This is a Linux kernel limitation, not a firmware one.
+- **PRUSS GPI R31[15:0] locked by kernel:** The 4.19-ti (and 5.10-ti) kernel sets
+  `PRUSS_CFG.GPCFG0` bit 25 during PRUSS initialization, locking all 16 GPI bits
+  (`R31[15:0]`) to MII_RT mode.  Writes to this bit — from either ARM or PRU — are
+  silently discarded.  The firmware works around this by routing the CAN RX edge through
+  the PRUSS Interrupt Controller (`GPIO2_7 → GPIO2 bank-A interrupt → sysevt 24 →
+  R31[30]`).  R31[30] is the PRUSS INTC host interrupt 0 output and is unaffected by
+  GPCFG0.
+
+- **INTC path only generates SOF events — no GLITCH or DOMINANT_RUNAWAY:** The INTC
+  approach detects GPIO falling edges but cannot classify pulse width (which requires
+  continuous `R31` sampling).  `GLITCH` and `DOMINANT_RUNAWAY` events are defined in the
+  protocol but never emitted; the signal quality diagnostics panel will show zeros.
+
+- **~33% SOF timestamp coverage on a loaded bus:** The firmware uses a 1 ms blind period
+  after each capture to reduce CPU load on the Python backend.  On a bus with 13 000+
+  frames/sec, approximately one frame in three receives a PRU nanosecond timestamp; the
+  rest receive kernel microsecond timestamps.  Increase `BLIND_COUNTS` in `main.c` to
+  change the trade-off (more timestamps vs. more CPU).
+
+- **IEP timer tick = 1 ns (DEFAULT_INC = 5):** The AM335x IEP increments by 5 per
+  200 MHz PRU clock cycle, giving 1 ns effective resolution (not 5 ns as documented in
+  older TI materials).  Rollover occurs every ~4.29 s (2³² ns).  The firmware tracks
+  rollovers; `t_fall_ns` in each event is monotonically increasing.  Accuracy degrades
+  by ±50 ppm (crystal tolerance); restart the backend to recalibrate.
+
+- **P8.46 GPIO interrupt fires to both PRU (via INTC) and ARM Linux:** Without the sysfs
+  `echo falling > edge` step, the GPIO bank interrupt reaches the PRUSS INTC hardware
+  path with no ARM handler registered.  If `echo falling > edge` is used, the ARM also
+  gets an interrupt handler that fires at the CAN edge rate, consuming significant CPU.
+  `setup_pru.sh` configures the GPIO exclusively via `/dev/mem` to avoid registering the
+  ARM handler.
+
+- **SocketCAN error frames do not report CRC errors as a dedicated class:** CRC errors
+  are inferred from `data[3]` (protocol violation location byte) when `CAN_ERR_PROT` is
+  set. This is a Linux kernel limitation, not a firmware one.
 - **Aborted frame detection has a 5 ms latency:** By design — the timeout must exceed worst-case Linux socket delivery latency. Isolated aborted frames appear in the dashboard within 5–6 ms of the bus event.
 - **Web UI has no authentication:** The FastAPI server binds to `0.0.0.0:8000` with no access control. Use an SSH tunnel or restrict binding to `127.0.0.1` on shared networks.
-- **Single CAN channel:** Only one CAN interface (`can0`, P9.24/P9.26) is currently implemented. PRU1 bit-bang second channel is planned (see roadmap).
+- **Single CAN channel:** Only one CAN interface (`can1`, P9.24/P9.26) is currently implemented. PRU1 bit-bang second channel is planned (see roadmap).
 - **DBC signals with no min/max defined:** `cantools` returns `None` for `signal.minimum` / `signal.maximum`; range checking is silently skipped for those signals.
 
 ---

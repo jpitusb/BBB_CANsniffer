@@ -5,7 +5,11 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+try:
+    from typing import Literal, Optional
+except ImportError:  # Python < 3.8
+    from typing_extensions import Literal  # type: ignore
+    from typing import Optional
 
 
 @dataclass

@@ -13,7 +13,7 @@ class PruEventType(int, Enum):
     DOMINANT_RUNAWAY = 0x03
 
 
-@dataclass(slots=True)
+@dataclass
 class PruEvent:
     type:       PruEventType
     flags:      int
@@ -22,7 +22,7 @@ class PruEvent:
     pulse_ns:   int   # 0 for SOF (frame still in progress at capture time)
 
 
-@dataclass(slots=True)
+@dataclass
 class EnrichedFrame:
     arb_id:      int
     dlc:         int
@@ -36,7 +36,7 @@ class EnrichedFrame:
         return {
             "arb_id":      f"0x{self.arb_id:03X}",
             "dlc":         self.dlc,
-            "data":        self.data.hex(" ").upper(),
+            "data":        " ".join("%02X" % b for b in self.data),
             "is_extended": self.is_extended,
             "pru_ts_ns":   self.pru_ts_ns,
             "kernel_ts":   self.kernel_ts,
@@ -44,13 +44,13 @@ class EnrichedFrame:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class AbortedFrameEvent:
     pru_ts_ns: int
     wall_time: float
 
 
-@dataclass(slots=True)
+@dataclass
 class ErrorEvent:
     ts:         float
     error_class: int

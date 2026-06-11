@@ -1,67 +1,73 @@
 /*
  * PRU0 CAN RX timestamp firmware for AM335x BeagleBone Black.
  *
- * Monitors the CAN RX shadow GPIO (P8.45 → R31 bit 0), classifies each
- * dominant phase as SOF, GLITCH, or DOMINANT_RUNAWAY, and writes a 16-byte
- * event into the DDR ring buffer at PRU_SHM_PHYS_ADDR.
+ * Uses the PRUSS INTC (Interrupt Controller) to detect CAN dominant edges.
+ * P8.46 (GPIO2_7) is configured as a GPIO with falling-edge interrupt.
+ * GPIO2 bank-A interrupt → PRUSS system event 24 → channel 0 →
+ * host interrupt 0 → R31[16].
  *
- * IEP timer provides 5 ns resolution (200 MHz PRU clock).  Rollover every
- * 2^32 × 5 ns = ~21.47 s is tracked in firmware; t_fall_ns in each event is
- * monotonically increasing nanoseconds since PRU start.
+ * R31[29:16] are PRUSS INTC host-interrupt bits.  They are hardwired to
+ * the INTC output and are completely independent of GPCFG0 (GPI mux).
+ * This bypasses the GPCFG0 bit-25 lock that permanently disables R31[15:0]
+ * on this BBB/kernel combination.
  *
- * Python reads the ring buffer via mmap(/dev/mem) and adds epoch_offset_ns
- * to convert to Unix nanoseconds.
+ * When CAN RX goes dominant (falling edge on P8.46 via 1 kΩ to P9.24),
+ * R31[16] goes high.  The PRU reads IEP immediately (~25 ns jitter vs the
+ * physical edge), writes an EVT_SOF event to the ring buffer, clears the
+ * GPIO interrupt, waits a 100 µs blind period to skip within-frame bits,
+ * then re-arms for the next SOF.
+ *
+ * IEP timer: 5 ns/tick at 200 MHz, rolls over every ~21.47 s.
+ * Rollover is tracked in DDR (shm->_pru_*) since gcc-pru SBBO to
+ * PRUDMEM (origin 0x0) hits boot ROM and is silently dropped.
  */
 
 #include <stdint.h>
-
 #include "shared_mem.h"
+#include "resource_table.h"
 
-/* PRU0 R31 bit 0 = P8.45 (pr1_pru0_pru_r31_0) */
-#define CAN_RX_BIT  (1u << 0)
-
-/*
- * gcc-pru named register variables for the PRU I/O ports.
- * R30 = output, R31 = input (GPI).
- */
-register uint32_t __R30 __asm__("r30");
+/* R31 = PRU input register: bits [15:0] = GPI (locked by GPCFG0 on this board),
+ * bits [29:16] = PRUSS INTC host interrupt status (NOT affected by GPCFG0). */
 register uint32_t __R31 __asm__("r31");
 
+/* GPIO2 registers (ARM physical 0x481AC000) — OMAP4-compatible offsets ---- */
+#define GPIO2_BASE              0x481AC000u
+#define GPIO_IRQSTATUS_0        0x02Cu   /* write 1 to clear bank-A status */
+#define GPIO2_7_MASK            (1u << 7)
+
+/* PRUSS INTC system event for GPIO2 bank-A --------------------------------- */
+#define INTC_GPIO2A_EVENT       24u
+
 /*
- * Enable the PRU OCP master port by clearing STANDBY_INIT (bit 4) in
- * PRUSS_CFG.SYSCFG (Constant Table C4, offset 0x04).
+ * IEP tick rate: DEFAULT_INC=5, PRU clock=200 MHz → 5 ticks/cycle ÷ 5 ns/cycle
+ * = 1 tick per 1 ns (1 GHz effective).  iep_to_ns multiplies by 1.
+ * Rollover: 2^32 ticks × 1 ns = 4 294 967 296 ns ≈ 4.29 s.
  *
- * A regular C pointer to 0x00026004 cannot work here: that address is
- * accessed through the OCP master, which is exactly what we're trying to
- * enable.  Instead we must use LBCO/SBCO which address via the constant
- * table entry directly, bypassing the OCP master entirely.
+ * Blind period after each detected SOF: 100 µs = 100 000 IEP ticks.
+ * Skips within-frame data-bit edges before re-arming for the next SOF.
  */
+#define BLIND_COUNTS            1000000u  /* 1 ms → ~1000 events/sec max */
+
+/* ── OCP / IEP helpers (same as before) ─────────────────────────────────── */
+
 static inline void ocp_enable(void)
 {
-    /* Constant table entry index 4 (C4) = PRUSS_CFG base; SYSCFG at offset 4 */
     __asm__ volatile (
-        "lbco r0, 4, 4, 4 \n"   /* read SYSCFG */
-        "clr  r0, r0, 4   \n"   /* clear STANDBY_INIT (bit 4) */
-        "sbco r0, 4, 4, 4 \n"   /* write back */
+        "lbco r0, 4, 4, 4 \n"
+        "clr  r0, r0, 4   \n"
+        "sbco r0, 4, 4, 4 \n"
         ::: "r0"
     );
 }
 
-/*
- * IEP access via constant table C26 (PRUSS IEP, internal routing).
- * SBBO/LBBO to 0x4A32E000 would use OCP self-targeting (blocked).
- * LBCO/SBCO via C26 uses the PRUSS internal bus — always accessible.
- *
- * IEP register offsets from its base: TMR_GLB_CFG=0x00, TMR_CNT=0x0C
- */
 static inline void iep_enable_and_reset(void)
 {
     __asm__ volatile (
-        "lbco r0, 26, 0x00, 4 \n"  /* read TMR_GLB_CFG */
-        "set  r0, r0, 0        \n"  /* set CNT_ENABLE (bit 0) */
-        "sbco r0, 26, 0x00, 4 \n"  /* write TMR_GLB_CFG */
+        "lbco r0, 26, 0x00, 4 \n"
+        "set  r0, r0, 0        \n"
+        "sbco r0, 26, 0x00, 4 \n"
         "ldi  r0, 0            \n"
-        "sbco r0, 26, 0x0C, 4 \n"  /* reset TMR_CNT = 0 */
+        "sbco r0, 26, 0x0C, 4 \n"
         ::: "r0"
     );
 }
@@ -72,33 +78,78 @@ static inline uint32_t iep_cnt_read(void)
     __asm__ volatile (
         "lbco r0, 26, 0x0C, 4 \n"
         "mov  %0, r0           \n"
-        : "=r" (cnt)
-        :
-        : "r0"
+        : "=r"(cnt) : : "r0"
     );
     return cnt;
 }
 
-static volatile pru_shm_t *const shm = (pru_shm_t *)PRU_SHM_ARM_ADDR;
-
-/* IEP period: 2^32 ticks × 5 ns = 21,474,836,480 ns */
-#define IEP_PERIOD_NS  21474836480ULL
-
-/*
- * Convert a raw IEP 32-bit count to monotonic nanoseconds.
- * Must be called on every sample so rollovers are not missed.
+/* ── PRUSS INTC configuration (C0 = PRUSS INTC internal bus) ─────────────
  *
- * Rollover state is stored in the DDR ring buffer header (shm->_pru_*)
- * rather than in C static variables — gcc-pru SBBO uses ARM physical
- * addresses, so statics at PRUDMEM origin 0x0 would land in boot ROM
- * and be silently dropped.
+ * Route GPIO2 bank-A interrupt (system event 24) to R31[16]:
+ *
+ *   System event 24  →  channel 0  →  host interrupt 0  →  R31[16]
+ *
+ * PRUSS INTC register offsets (from PRUSS+0x20000, accessed via C0):
+ *   0x04  CR      - control (enable bit 0)
+ *   0x10  GER     - global enable (bit 0)
+ *   0x24  SICR    - Status Index Clear (write event number)
+ *   0x28  EISR    - Enable Index Set  (write event number)
+ *   0x34  HIEISR  - Host Interrupt Enable Index Set (write host int number)
+ *   0x40C CMR3    - Channel Map 3, events 24-31 (4 bits each)
+ *   0x800 HMR0    - Host Interrupt Map 0, channels 0-7 (4 bits each)
+ *   0xD00 SIPR0   - Polarity 0, events 0-31 (1 bit: 0=active-low, 1=active-hi)
+ *   0xD80 SITR0   - Type 0, events 0-31 (1 bit: 0=pulse, 1=level)
  */
+/*
+ * PRUSS INTC initialisation — PRU side.
+ *
+ * LBCO/SBCO (constant-table access, internal PRUSS bus) has an 8-bit
+ * byte-offset limit (0–255).  SIPR0 (0xD00), SITR0 (0xD80), CMR3 (0x40C)
+ * and HMR0 (0x800) exceed this limit, so they are configured from the ARM
+ * side in setup_pru.sh before the PRU starts.
+ *
+ * Power-on reset defaults (SPRUHH7B Table 4-x):
+ *   CMR*  = 0  → all events map to channel 0           ✓ already correct
+ *   HMR*  = 0  → channel 0 maps to host interrupt 0    ✓ already correct
+ *   SIPR0 = 0  → active LOW  (setup_pru.sh sets bit 24 = active HIGH)
+ *   SITR0 = 0  → pulse mode  (setup_pru.sh sets bit 24 = level mode)
+ *
+ * Here we only need the registers within the 0-255 offset window:
+ *   GER   (0x10) — global enable
+ *   EISR  (0x28) — enable event 24
+ *   HIEISR(0x34) — enable host interrupt 0
+ */
+static inline void intc_init(void)
+{
+    /* All large-offset INTC registers (SIPR0, SITR0, CMR3, HMR0, HIER)
+     * are configured from the ARM in setup_pru.sh before PRU start.
+     * Here we only touch the registers within LBCO's 8-bit offset window: */
+
+    /* Enable system event 24 (EISR at offset 0x28) */
+    __asm__ volatile("ldi r0, 24\n sbco r0, 0, 0x28, 4\n" ::: "r0");
+
+    /* Enable host interrupt 0 (HIEISR at offset 0x34) */
+    __asm__ volatile("ldi r0,  0\n sbco r0, 0, 0x34, 4\n" ::: "r0");
+
+    /* Enable global interrupt (GER at offset 0x10) */
+    __asm__ volatile("ldi r0,  1\n sbco r0, 0, 0x10, 4\n" ::: "r0");
+
+    /* Enable INTC module via CR register (offset 0x04, bit 0) */
+    __asm__ volatile("ldi r0,  1\n sbco r0, 0, 0x04, 4\n" ::: "r0");
+}
+
+/* ── Ring buffer ─────────────────────────────────────────────────────────── */
+
+#define shm  ((volatile pru_shm_t *)PRU_SHM_ARM_ADDR)
+
+#define IEP_PERIOD_NS  4294967296ULL   /* 2^32 ticks × 1 ns/tick */
+
 static uint64_t iep_to_ns(uint32_t count)
 {
     if (count < shm->_pru_prev_iep)
         shm->_pru_rollover_ns += IEP_PERIOD_NS;
     shm->_pru_prev_iep = count;
-    return shm->_pru_rollover_ns + (uint64_t)count * 5ULL;
+    return shm->_pru_rollover_ns + (uint64_t)count * 1ULL;  /* 1 ns/tick */
 }
 
 static void write_event(uint8_t type, uint16_t seq,
@@ -106,68 +157,91 @@ static void write_event(uint8_t type, uint16_t seq,
 {
     uint32_t idx = shm->write_idx & (PRU_RING_DEPTH - 1u);
     volatile pru_event_t *e = &shm->ring[idx];
-
     e->type      = type;
     e->flags     = 0;
     e->seq       = seq;
     e->t_fall_ns = t_fall_ns;
     e->pulse_ns  = pulse_ns;
-
-    /* Ensure all fields are visible before the index bump that signals Python */
     __asm__ volatile ("" ::: "memory");
     shm->write_idx++;
 }
 
+/* ── GPIO2 interrupt clear ───────────────────────────────────────────────── */
+
+static inline void gpio2_irq_clear(void)
+{
+    /* Clear GPIO2_7 interrupt status via SBBO to ARM physical 0x481AC03C.
+     * Must be done before clearing PRUSS INTC event so the GPIO line
+     * de-asserts and the level-triggered event can fire again next time. */
+    volatile uint32_t *clr =
+        (volatile uint32_t *)(GPIO2_BASE + GPIO_IRQSTATUS_0);
+    *clr = GPIO2_7_MASK;
+}
+
+static inline void intc_event_clear(void)
+{
+    /* Clear PRUSS INTC system event 24 (SICR at C0+0x24) */
+    __asm__ volatile("ldi r0, 24\n sbco r0, 0, 0x24, 4\n" ::: "r0");
+}
+
+/* ── Entry point ─────────────────────────────────────────────────────────── */
+
 void main(void)
 {
-    uint32_t iep_fall, iep_now;
+    uint32_t iep_snap;
     uint64_t t_fall_ns;
-    uint32_t pulse_counts;
     uint16_t seq = 0;
-    uint32_t stability;
 
-    ocp_enable();                /* best-effort; ARM pre-enables OCP before start */
-    iep_enable_and_reset();     /* uses SBCO/C26, always works regardless of OCP */
+    ocp_enable();
+    iep_enable_and_reset();
+    intc_init();
+
+    /* Clear any GPIO interrupt that accumulated before we started */
+    gpio2_irq_clear();
+    intc_event_clear();
 
     shm->magic            = PRU_SHM_MAGIC;
     shm->write_idx        = 0;
     shm->_pru_prev_iep    = 0;
     shm->_pru_rollover_ns = 0;
 
+
     while (1) {
-        /* IDLE: spin until CAN RX goes dominant (low) */
-        while (__R31 & CAN_RX_BIT)
+        /*
+         * WAIT: spin until R31[16] goes high.
+         * R31[16] = PRUSS INTC host interrupt 0 = GPIO2 bank-A interrupt
+         * = falling edge on P8.46 = CAN dominant (SOF start).
+         * This bit is independent of GPCFG0 (GPI mux lock).
+         */
+        /* Wait for host interrupt 0 on R31[30] = GPIO2 bank-A interrupt */
+        while (!(__R31 & (1u << 30)))
             ;
 
-        iep_fall  = iep_cnt_read();
-        t_fall_ns = iep_to_ns(iep_fall);
+        /* Snapshot IEP the instant the interrupt fires (~25 ns jitter) */
+        iep_snap  = iep_cnt_read();
+        t_fall_ns = iep_to_ns(iep_snap);
 
-        /* MEASURE_PULSE: spin while dominant, classify on recessive transition */
-        while (!(__R31 & CAN_RX_BIT)) {
-            iep_now      = iep_cnt_read();
-            pulse_counts = iep_now - iep_fall;   /* unsigned wrap is intentional */
-            if (pulse_counts >= SOF_MAX_COUNTS) {
-                iep_to_ns(iep_now);   /* keep rollover counter current */
-                write_event(EVT_DOMINANT_RUNAWAY, seq++,
-                            t_fall_ns, pulse_counts * 5u);
-                goto wait_idle;
-            }
-        }
+        /*
+         * Clear in correct order:
+         *  1. GPIO2_7 IRQSTATUS first (de-asserts the system event level)
+         *  2. Then clear PRUSS INTC event (so it can re-arm for next edge)
+         */
+        gpio2_irq_clear();
+        intc_event_clear();
 
-        pulse_counts = iep_cnt_read() - iep_fall;
-        if (pulse_counts < GLITCH_THRESHOLD_COUNTS)
-            write_event(EVT_GLITCH, seq++, t_fall_ns, pulse_counts * 5u);
-        else
-            write_event(EVT_SOF, seq++, t_fall_ns, 0u);
+        /* Write SOF timestamp to ring buffer */
+        write_event(EVT_SOF, seq++, t_fall_ns, 0u);
 
-wait_idle:
-        /* WAIT_BUS_IDLE: require IFS_COUNTS consecutive recessive ticks */
-        stability = 0;
-        while (stability < IFS_COUNTS) {
-            if (__R31 & CAN_RX_BIT)
-                stability++;
-            else
-                stability = 0;
-        }
+        /*
+         * Blind period: wait BLIND_COUNTS IEP ticks (100 µs) so we skip
+         * within-frame data-bit edges.  The next detection will be the
+         * SOF of the following CAN frame.
+         */
+        while ((iep_cnt_read() - iep_snap) < BLIND_COUNTS)
+            ;
+
+        /* Drain any edges that accumulated during the blind period */
+        gpio2_irq_clear();
+        intc_event_clear();
     }
 }
