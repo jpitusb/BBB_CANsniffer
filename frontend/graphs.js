@@ -695,13 +695,17 @@
   // ── Tab lifecycle ──────────────────────────────────────────────────────────
   function graphsTabActivated() {
     isActive = true;
-    initHeatmapCanvas();
-    rebuildAllCharts();
     populateIdDropdown();
     if (!renderIntervalId) {
       renderIntervalId = setInterval(updateCharts, Math.round(1000 / RENDER_HZ));
     }
     attachResizeObserver();
+    // Defer chart build by two animation frames so the panel finishes
+    // transitioning from display:none → display:flex before we measure widths.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      initHeatmapCanvas();
+      rebuildAllCharts();
+    }));
   }
 
   function graphsTabDeactivated() {
