@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CAN Sniffer</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 </head>
 <body>
 
@@ -28,6 +30,7 @@
     <button class="tab" data-panel="panel-latency">Latency</button>
     <button class="tab" data-panel="panel-trigger">Trigger <span id="trigger-tab-badge" class="badge-count hidden"></span></button>
     <button class="tab" data-panel="panel-stats">Stats</button>
+    <button class="tab" data-panel="panel-graphs">Graphs</button>
   </nav>
 
   <!-- ── Frames panel ─────────────────────────────────────────── -->
@@ -164,8 +167,65 @@
       <div class="stat-box"><div id="stat-aborts">0</div><label>Aborted Frames</label></div>
     </div>
   </section>
+
+  <!-- ── Graphs panel ──────────────────────────────────────────── -->
+  <section id="panel-graphs" class="panel graphs-panel">
+
+    <div class="graphs-scroll">
+
+      <!-- Row 1: Bus load + TEC/REC + Error rate -->
+      <div class="graphs-row">
+        <div class="graph-card">
+          <div class="graph-card-title">Bus Load Timeline</div>
+          <div id="graph-busload-wrap" class="graph-wrap"></div>
+        </div>
+        <div class="graph-card">
+          <div class="graph-card-title">TEC / REC Trend</div>
+          <div id="graph-tecrec-wrap" class="graph-wrap"></div>
+        </div>
+        <div class="graph-card">
+          <div class="graph-card-title">Error Rate</div>
+          <div id="graph-errrate-wrap" class="graph-wrap"></div>
+        </div>
+      </div>
+
+      <!-- Row 2: Latency trend (full width) -->
+      <div class="graphs-row graphs-row-full">
+        <div class="graph-card">
+          <div class="graph-card-title">Latency Trend (mean µs per pair)</div>
+          <div id="graph-latency-wrap" class="graph-wrap"></div>
+        </div>
+      </div>
+
+      <!-- Row 3: Heatmap (full width) -->
+      <div class="graphs-row graphs-row-full">
+        <div class="graph-card">
+          <div class="graph-card-title">Frame Activity Heatmap</div>
+          <div id="graph-heatmap-wrap" class="graph-wrap graph-wrap-heatmap"></div>
+        </div>
+      </div>
+
+      <!-- Row 4: Per-ID interval histogram + PRU/kernel delta histogram -->
+      <div class="graphs-row">
+        <div class="graph-card">
+          <div class="graph-card-title">
+            Per-ID Interval Distribution
+            <select id="graph-id-select" class="graph-select"></select>
+          </div>
+          <div id="graph-idhist-wrap" class="graph-wrap"></div>
+        </div>
+        <div class="graph-card">
+          <div class="graph-card-title">PRU vs Kernel Timestamp Δ</div>
+          <div id="graph-pruhist-wrap" class="graph-wrap"></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
 </main>
 
 <script src="/static/app.js"></script>
+<script src="/static/graphs.js"></script>
 </body>
 </html>

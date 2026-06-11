@@ -34,11 +34,24 @@ const btnPause      = document.getElementById("btn-pause");
 const btnClear      = document.getElementById("btn-clear");
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
+let _activePanel = "panel-frames";
+
 document.querySelectorAll(".tab").forEach(tab => {
   tab.addEventListener("click", () => {
+    const leaving = _activePanel;
     document.querySelectorAll(".tab, .panel").forEach(el => el.classList.remove("active"));
     tab.classList.add("active");
-    document.getElementById(tab.dataset.panel).classList.add("active");
+    const entering = tab.dataset.panel;
+    document.getElementById(entering).classList.add("active");
+    _activePanel = entering;
+
+    // Notify graphs module of visibility changes
+    if (leaving === "panel-graphs" && typeof graphsTabDeactivated !== "undefined") {
+      graphsTabDeactivated();
+    }
+    if (entering === "panel-graphs" && typeof graphsTabActivated !== "undefined") {
+      graphsTabActivated();
+    }
   });
 });
 
@@ -91,6 +104,9 @@ function connect() {
     if (msg.timing)                 updateTiming(msg.timing);
     if (msg.latency)                updateLatency(msg.latency);
     if (msg.trigger)                updateTrigger(msg.trigger);
+
+    // Feed graphs module regardless of active tab (data must accumulate)
+    if (typeof graphsIngest !== "undefined") graphsIngest(msg);
   };
 }
 

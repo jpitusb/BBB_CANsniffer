@@ -328,3 +328,75 @@ main { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
   text-decoration: none;
 }
 .capture-row a:hover { background: var(--ok); color: var(--bg); }
+
+/* ── Graphs panel ─────────────────────────────────────────── */
+.graphs-panel { overflow: hidden; }
+
+.graphs-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.graphs-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.graphs-row-full {
+  grid-template-columns: 1fr;
+}
+
+.graph-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px 12px;
+  min-width: 0;
+}
+
+.graph-card-title {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: normal;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.graph-wrap {
+  min-height: 160px;
+  position: relative;
+}
+
+.graph-wrap-heatmap {
+  min-height: 180px;
+}
+
+/* Override uPlot defaults to match dark theme */
+.uplot-chart .u-title {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.u-wrap { background: transparent !important; }
+.u-hz   { background: transparent !important; }
+
+.graph-select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
