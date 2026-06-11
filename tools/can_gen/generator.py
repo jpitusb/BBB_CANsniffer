@@ -8,6 +8,7 @@ Usage:
 
 Scenarios (can combine multiple with --scenario):
   normal         Periodic good traffic (3 messages, correct rates/DLC/signals)
+  cmd_resp       Master polls 6 nodes ~10x/sec (0x10N->0x00N); populates latency
   babble         0x100 at 10× its normal 10 ms cycle (triggers BABBLING_TX)
   missing        0x100 disappears for 3 s then resumes (triggers MISSING_MSG)
   unknown_id     Sprinkle frames with IDs not in the DBC (UNEXPECTED_ID)
@@ -241,6 +242,47 @@ async def task_bus_flood(bus: can.Bus) -> None:
         await asyncio.sleep(0.010)
 
 
+async def task_cmd_resp(bus: can.Bus) -> None:
+    """Emulate a master polling 6 nodes via command/response.
+
+    Master sends request 0x10N to node N; the node replies 0x00N after a short
+    processing delay (~1-5 ms). This matches the pattern latency pair
+    (request_base 0x100 -> response_base 0x000, lower byte = node id), so the
+    dashboard Latency tab and the Graphs latency-trend chart show one series
+    per node (Device 0x01 .. 0x06).
+
+    Each node is polled ~10x/sec: 6 nodes x ~10 = ~60 req + ~60 resp ~= 120
+    frames/sec. The measured latency per node is the reply delay (~1-5 ms).
+    """
+    NODES    = [1, 2, 3, 4, 5, 6]
+    PERIOD_S = 0.1                      # poll each node ~10x/sec
+
+    def _send(arb_id: int, data: bytes) -> None:
+        try:
+            bus.send(can.Message(arbitration_id=arb_id, data=data,
+                                 is_extended_id=False))
+        except can.CanError:
+            pass
+
+    async def poll(node: int, phase: float) -> None:
+        # Stagger node start phases so the 6 pollers spread evenly across the
+        # 100 ms period instead of bursting together.
+        await asyncio.sleep(phase)
+        req_id, resp_id = 0x100 | node, 0x000 | node
+        counter = 0
+        while True:
+            counter = (counter + 1) & 0xFF
+            _send(req_id, bytes([0x40, node, counter]))               # request
+            await asyncio.sleep(random.uniform(0.001, 0.005))         # node processing
+            _send(resp_id, bytes([0x43, node, counter, 0, 0, 0, 0, 0]))  # response
+            await asyncio.sleep(PERIOD_S)
+
+    print(f"[cmd_resp] master polling nodes {NODES} ~10x/sec each "
+          f"(0x10N->0x00N, ~120 fps)", flush=True)
+    await asyncio.gather(
+        *(poll(n, i * PERIOD_S / len(NODES)) for i, n in enumerate(NODES)))
+
+
 async def task_pru_glitch(pru: PruFault) -> None:
     """One-shot physical glitch via PRU then idle."""
     print("[PRU] glitch: single 400 ns dominant pulse")
@@ -279,6 +321,7 @@ async def task_pru_intermittent(pru: PruFault) -> None:
 
 SCENARIO_MAP = {
     "normal":       (task_normal,            False),
+    "cmd_resp":     (task_cmd_resp,          False),
     "babble":       (task_babble,            False),
     "missing":      (task_missing,           False),
     "unknown_id":   (task_unknown_id,        False),
