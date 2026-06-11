@@ -16,7 +16,9 @@ Beyond raw frame capture, the sniffer includes a full bus-health diagnostics lay
 - **Behavioral monitoring** — per-message state machine checks periodic timing, babbling transmitters, unexpected IDs, DLC mismatches, and signal range violations (requires DBC file)
 - **Three-tier alert system** — CRITICAL / WARN / INFO with per-severity cooldowns and deduplication
 - **SQLite logging** — WAL-mode database with 7-day frame retention and 30-day PRU event retention
-- **Live browser dashboard** — dark-theme UI over WebSocket, 20 Hz update rate, no laptop software required
+- **Live browser dashboard** — dark-theme UI over WebSocket, 5 Hz update rate, no laptop software required
+- **Diagnostic graphs** — uPlot charts (bus load, TEC/REC, error rate, latency trend, activity heatmap, per-ID interval and PRU-vs-kernel histograms) served locally, no CDN
+- **BBB health monitoring** — live CPU, memory, temperature, load average, uptime, and disk usage
 - **Per-ID timing statistics** — rolling min/max/mean/σ/p95/p99 inter-frame intervals and jitter RMS; rows highlight when jitter exceeds 10% of mean
 - **Request/response latency** — configurable address pairs (explicit or pattern-based); measures µs latency between matched request and response frames; edit live from the dashboard
 - **Pre/post-trigger capture** — arm on arb_id / error frame / bus load threshold / manual fire; snapshots 200 frames before and after trigger; download as JSON or SVG sequence diagram
@@ -85,6 +87,10 @@ sudo /opt/can_sniffer/tools/can_gen/setup_bbb2.sh
 # Generate traffic
 sudo python3 /opt/can_sniffer/tools/can_gen/generator.py --list
 sudo python3 /opt/can_sniffer/tools/can_gen/generator.py -s normal --loop
+
+# Command/response load (1 master polling 6 nodes ~10x/sec each, ~120 fps).
+# Mirrors a real command/response bus and populates the Latency tab/graph.
+sudo python3 /opt/can_sniffer/tools/can_gen/generator.py -s cmd_resp --loop
 ```
 
 ### After every reboot — two-board test setup
@@ -167,7 +173,7 @@ SocketCAN   pru_shm.py (/dev/mem mmap)
               ┌─────────┴──────────┐
               ▼                    ▼
          diag_logger.py      FastAPI + WebSocket
-         (SQLite WAL)        server.py (20 Hz)
+         (SQLite WAL)        server.py (5 Hz)
                                    │
                             Browser dashboard
                             (vanilla JS, dark theme)
@@ -359,9 +365,11 @@ BBB_CANsniffer/
 │   ├── latency_pairs.example.json # Template — copy to latency_pairs.json and edit
 │   └── .gitignore                 # *.db and latency_pairs.json excluded from git
 ├── frontend/
-│   ├── index.html                 # Frames, Timing, Latency, Trigger, Diagnostics, Stats tabs
+│   ├── index.html                 # Frames, Diagnostics, Timing, Latency, Trigger, Stats, Graphs, BBB Health tabs
 │   ├── style.css                  # Dark theme, CSS custom properties
-│   └── app.js                     # WebSocket client, ring buffer, timing/latency/trigger UI
+│   ├── app.js                     # WebSocket client, ring buffer, timing/latency/trigger/health UI
+│   ├── graphs.js                  # uPlot diagnostic charts (Graphs tab)
+│   └── uPlot.iife.min.js / .css   # vendored uPlot (served from /static/, gitignored)
 ├── scripts/
 │   ├── bootstrap.sh               # first-time setup: clone repo, patch uEnv.txt, reboot
 │   ├── install_deps.sh            # post-reboot: apt, pip, build firmware, install services
@@ -371,7 +379,7 @@ BBB_CANsniffer/
 │   └── test_can1_tx.sh            # loopback test: can1 → can0 on same board
 ├── tools/
 │   └── can_gen/
-│       ├── generator.py           # BBB #2 CAN traffic + fault generator (11 scenarios)
+│       ├── generator.py           # BBB #2 CAN traffic + fault generator (12 scenarios)
 │       └── setup_bbb2.sh          # full one-shot setup for BBB #2 (generator)
 └── systemd/
     ├── pru-loader.service         # Loads PRU firmware via remoteproc
@@ -525,7 +533,7 @@ The frontend is served automatically by the FastAPI backend from `frontend/`. No
 
 | Tab | Panel | Contents |
 |-----|-------|----------|
-| Frames | Frame table | PRU timestamp, Arb ID, DLC, data bytes, per-ID delta time (µs) |
+| Frames | Frame table | PRU timestamp (ns), kernel timestamp (s), Arb ID, DLC, data bytes, per-ID delta time (µs) |
 | Frames | Bus load bar | Rolling 1-second utilization; colors green → amber → red |
 | Timing | Stats table | Per-ID: count, fps, min/max/mean/σ/p95 interval (ms), jitter RMS; highlights when jitter > 10% of mean |
 | Latency | Latency table | Per configured pair: count, min/max/mean/σ/last (µs) |
@@ -538,6 +546,8 @@ The frontend is served automatically by the FastAPI backend from `frontend/`. No
 | Diagnostics | Missing messages | Per-ID overdue time vs. DBC cycle time |
 | Diagnostics | Alert feed | Active CRITICAL / WARN / INFO alerts with age |
 | Stats | Summary | Total frames, unique IDs, error events, aborted frames |
+| Graphs | Diagnostic charts | uPlot: bus-load timeline, TEC/REC trend, error rate, latency trend (per pair), frame-activity heatmap, per-ID interval histogram, PRU-vs-kernel Δ histogram |
+| BBB Health | System monitor | CPU %, memory, CPU temperature, load average, uptime, disk usage (color-coded bars) |
 
 **Controls:**
 
@@ -864,11 +874,23 @@ A properly wired CAN bus has exactly two 120 Ω termination resistors — one at
   continuous `R31` sampling).  `GLITCH` and `DOMINANT_RUNAWAY` events are defined in the
   protocol but never emitted; the signal quality diagnostics panel will show zeros.
 
-- **~33% SOF timestamp coverage on a loaded bus:** The firmware uses a 1 ms blind period
-  after each capture to reduce CPU load on the Python backend.  On a bus with 13 000+
-  frames/sec, approximately one frame in three receives a PRU nanosecond timestamp; the
-  rest receive kernel microsecond timestamps.  Increase `BLIND_COUNTS` in `main.c` to
-  change the trade-off (more timestamps vs. more CPU).
+- **Partial SOF timestamp coverage; 10 ms blind period:** After each captured SOF the
+  firmware ignores edges for a blind period (`BLIND_COUNTS` in `main.c`, currently
+  10 ms = ~100 captures/sec max) before re-arming.  This exists because P8.46 re-asserts
+  the PRUSS INTC line essentially every blind period even on a near-idle bus, so a short
+  blind period pegs the PRU at its ceiling and floods the single-core ARM backend with
+  phantom events.  At 10 ms the PRU contributes at most ~100 nanosecond timestamps/sec;
+  on a faster bus the remaining frames carry only the kernel microsecond timestamp.
+  Lower `BLIND_COUNTS` (toward `1000000u` = 1 ms) for higher coverage **only** if you have
+  CPU headroom — see the performance note below.
+
+- **CPU scales with frame rate (~0.38%/frame on the AM335x):** The per-frame correlation
+  and diagnostics pipeline is Python on a 1 GHz single-core Cortex-A8.  Idle baseline is
+  ~20%; at the ~120 frame/sec command/response rate the backend uses ~60-65% of the core.
+  `bus.recv()` itself is cheap (~8%) and the WebSocket is negligible at that rate — the
+  cost is the aggregate per-frame fan-out.  There is no single hot spot to optimise; the
+  board has headroom at typical command/response rates but is not suited to sustained
+  multi-thousand-frame/sec buses.
 
 - **IEP timer tick = 1 ns (DEFAULT_INC = 5):** The AM335x IEP increments by 5 per
   200 MHz PRU clock cycle, giving 1 ns effective resolution (not 5 ns as documented in
