@@ -172,9 +172,11 @@ function renderTable() {
 
 // ── Bus load ─────────────────────────────────────────────────────────────────
 function updateBusLoad(fraction) {
-  const pct = Math.round(fraction * 100);
-  busLoadLabel.textContent = `Bus: ${pct}%`;
-  busLoadFill.style.width  = `${pct}%`;
+  const pct = fraction * 100;
+  // One decimal so low-traffic buses (a handful of frames/sec at 500 kbit/s
+  // is well under 1%) still show a non-zero value instead of rounding to 0%.
+  busLoadLabel.textContent = `Bus: ${pct.toFixed(1)}%`;
+  busLoadFill.style.width  = `${Math.min(pct, 100)}%`;
   busLoadFill.style.background =
     pct > 80 ? "var(--critical)" : pct > 50 ? "var(--warn)" : "var(--ok)";
 }
