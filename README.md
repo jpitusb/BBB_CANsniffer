@@ -246,6 +246,25 @@ edge detection without using the GPI path (`R31[15:0]`) which is locked by the k
 >
 > The resistor limits boot-conflict current to ≈ 3 mA and is transparent at 500 kbit/s.
 
+> **Troubleshooting — board won't boot with P8.46 connected.**
+> P8.46 is **LCD_DATA1**, which on the AM335x doubles as a **SYSBOOT (boot-mode)
+> configuration pin** sampled only during power-on reset.  Before `setup_pru.sh` runs,
+> the pin is an LCD_DATA push-pull output; with the jumper attached, the transceiver's
+> RX line holds it at a level during the power-on window, which both fights the BBB
+> driver and can flip the sampled boot mode — so the board hangs / won't boot.  (This is
+> the same conflict that destroyed P8.45's input buffer before the tap moved to P8.46.)
+>
+> Fixes, in order of preference:
+> 1. **Use the correct resistor.** It must be **1 kΩ**, not 100 kΩ.  Verify the installed
+>    value first — a wrong/high value is the most common cause.
+> 2. **Connect P8.46 after boot.**  Power on with the P8.46 jumper *disconnected*; once
+>    Linux is up (services started, pin reconfigured to a GPIO input), connect it.  SYSBOOT
+>    is sampled only at power-on reset, so the connection is harmless until the next power
+>    cycle.  (Reliable, but not hands-off — avoid for unattended boxes.)
+> 3. **Hold the S2 / BOOT button** during power-on to force a fixed boot source.
+> 4. If a 1 kΩ still won't boot, relocate the PRU edge tap to a **non-LCD_DATA pin** (any
+>    LCD_DATA[0:15] pin has the same SYSBOOT hazard).
+
 ### BBB #2 — Traffic / Fault Generator Wiring
 
 A second BBB can generate CAN traffic and physical-layer faults for testing. It uses the same CAN pins but P8.45 is an **output** instead of an input.
@@ -904,6 +923,13 @@ A properly wired CAN bus has exactly two 120 Ω termination resistors — one at
   gets an interrupt handler that fires at the CAN edge rate, consuming significant CPU.
   `setup_pru.sh` configures the GPIO exclusively via `/dev/mem` to avoid registering the
   ARM handler.
+
+- **P8.46 is a SYSBOOT pin — can block boot:** P8.46 (LCD_DATA1) is sampled as a boot-mode
+  config pin at power-on reset.  With the edge-tap jumper attached, the transceiver can
+  hold it at a level that corrupts the sampled boot mode and the board won't boot.  Use
+  the **1 kΩ** series resistor (not 100 kΩ); if it still won't boot, connect P8.46 after
+  boot, hold S2 at power-on, or move the tap to a non-LCD_DATA pin.  See the
+  *Troubleshooting* note under [Hardware → Wiring](#wiring).
 
 - **SocketCAN error frames do not report CRC errors as a dedicated class:** CRC errors
   are inferred from `data[3]` (protocol violation location byte) when `CAN_ERR_PROT` is
