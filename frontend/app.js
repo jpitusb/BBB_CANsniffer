@@ -104,6 +104,7 @@ function connect() {
     if (msg.timing)                 updateTiming(msg.timing);
     if (msg.latency)                updateLatency(msg.latency);
     if (msg.trigger)                updateTrigger(msg.trigger);
+    if (msg.health)                 updateHealth(msg.health);
 
     // Feed graphs module regardless of active tab (data must accumulate)
     if (typeof graphsIngest !== "undefined") graphsIngest(msg);
@@ -417,6 +418,78 @@ tbody.addEventListener("dblclick", async (e) => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kernel_ts, arb_id, note }) });
 });
+
+// ── BBB Health ───────────────────────────────────────────────────────────────
+function updateHealth(h) {
+  if (!h) return;
+
+  function setBar(barId, pct) {
+    const el = document.getElementById(barId);
+    if (!el) return;
+    const p = pct == null ? 0 : Math.min(100, pct);
+    el.style.width = p + "%";
+    el.style.background = p > 85 ? "var(--critical)" : p > 60 ? "var(--warn)" : "var(--ok)";
+  }
+
+  function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+
+  function colorBig(id, pct) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.color = pct > 85 ? "var(--critical)" : pct > 60 ? "var(--warn)" : "var(--text)";
+  }
+
+  // CPU
+  if (h.cpu_pct != null) {
+    setText("hth-cpu-val", h.cpu_pct + "%");
+    setBar("hth-cpu-bar", h.cpu_pct);
+    colorBig("hth-cpu-val", h.cpu_pct);
+  }
+  if (h.load) {
+    setText("hth-load", "Load: " + h.load.map(v => v.toFixed(2)).join("  "));
+  }
+
+  // Memory
+  if (h.mem) {
+    setText("hth-mem-val", h.mem.pct + "%");
+    setText("hth-mem-detail", h.mem.used_mb + " MB / " + h.mem.total_mb + " MB");
+    setBar("hth-mem-bar", h.mem.pct);
+    colorBig("hth-mem-val", h.mem.pct);
+  }
+
+  // Temperature
+  if (h.temp_c != null) {
+    const el = document.getElementById("hth-temp-val");
+    if (el) {
+      el.textContent = h.temp_c + " °C";
+      el.style.color = h.temp_c > 80 ? "var(--critical)" : h.temp_c > 65 ? "var(--warn)" : "var(--text)";
+    }
+  }
+
+  // Uptime
+  if (h.uptime_s != null) {
+    const s = Math.floor(h.uptime_s);
+    const d = Math.floor(s / 86400);
+    const hh = Math.floor((s % 86400) / 3600);
+    const mm = Math.floor((s % 3600) / 60);
+    const parts = [];
+    if (d) parts.push(d + "d");
+    if (hh || d) parts.push(hh + "h");
+    parts.push(mm + "m");
+    setText("hth-uptime", "Uptime: " + parts.join(" "));
+  }
+
+  // Disk
+  if (h.disk) {
+    setText("hth-disk-val", h.disk.pct + "%");
+    setText("hth-disk-detail", h.disk.used_gb + " GB / " + h.disk.total_gb + " GB");
+    setBar("hth-disk-bar", h.disk.pct);
+    colorBig("hth-disk-val", h.disk.pct);
+  }
+}
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 connect();

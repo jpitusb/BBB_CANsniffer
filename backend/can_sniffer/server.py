@@ -23,12 +23,13 @@ from .pru_shm import PruShm
 from .sequence_export import export_svg_from_session
 from .socketcan_reader import SocketCanReader
 from .tec_rec_poller import TecRecPoller
+from .system_health import SystemHealthMonitor
 from .timing_stats import TimingStatsCollector
 from .trigger_capture import TriggerCapture, TriggerCondition
 
 FRONTEND_DIR      = Path(__file__).parent.parent.parent / "frontend"
-UPDATE_INTERVAL_S = 0.05   # 20 Hz
-TIMEOUT_CHECK_S   = 0.05
+UPDATE_INTERVAL_S = 0.1    # 10 Hz
+TIMEOUT_CHECK_S   = 0.1
 DB_PATH           = Path(os.environ.get("CAN_SNIFFER_DB",
                          "/opt/can_sniffer/data/diagnostics.db"))
 PAIRS_PATH        = Path("/opt/can_sniffer/data/latency_pairs.json")
@@ -41,11 +42,12 @@ _logger:         DiagLogger
 _timing:         TimingStatsCollector
 _latency:        LatencyMonitor
 _trigger:        TriggerCapture
+_health:         SystemHealthMonitor
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    global _frame_store, _bus_load, _diag, _logger, _timing, _latency, _trigger
+    global _frame_store, _bus_load, _diag, _logger, _timing, _latency, _trigger, _health
 
     _frame_store = FrameStore(maxlen=1000)
     _bus_load    = BusLoadMonitor()
@@ -60,6 +62,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _timing  = TimingStatsCollector()
     _latency = LatencyMonitor(explicit, patterns)
     _trigger = TriggerCapture()
+    _health  = SystemHealthMonitor()
 
     pru        = PruShm()
     correlator = Correlator(epoch_offset_ns=pru.epoch_offset_ns)
@@ -123,6 +126,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
                 "timing":   _timing.snapshot(),
                 "latency":  _latency.snapshot(),
                 "trigger":  _trigger.snapshot(),
+                "health":   _health.snapshot(),
             }))
             await asyncio.sleep(UPDATE_INTERVAL_S)
     except WebSocketDisconnect:

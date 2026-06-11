@@ -31,6 +31,7 @@
     <button class="tab" data-panel="panel-trigger">Trigger <span id="trigger-tab-badge" class="badge-count hidden"></span></button>
     <button class="tab" data-panel="panel-stats">Stats</button>
     <button class="tab" data-panel="panel-graphs">Graphs</button>
+    <button class="tab" data-panel="panel-health">BBB Health</button>
   </nav>
 
   <!-- ── Frames panel ─────────────────────────────────────────── -->
@@ -217,6 +218,42 @@
         <div class="graph-card">
           <div class="graph-card-title">PRU vs Kernel Timestamp Δ</div>
           <div id="graph-pruhist-wrap" class="graph-wrap"></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── BBB Health panel ─────────────────────────────────────────── -->
+  <section id="panel-health" class="panel">
+    <div class="health-scroll">
+
+      <div class="health-row">
+        <div class="health-card">
+          <div class="health-card-title">CPU Usage</div>
+          <div class="health-big" id="hth-cpu-val">—</div>
+          <div class="health-bar-track"><div class="health-bar-fill" id="hth-cpu-bar"></div></div>
+          <div class="health-sub" id="hth-load">Load: — — —</div>
+        </div>
+        <div class="health-card">
+          <div class="health-card-title">Memory</div>
+          <div class="health-big" id="hth-mem-val">—</div>
+          <div class="health-bar-track"><div class="health-bar-fill" id="hth-mem-bar"></div></div>
+          <div class="health-sub" id="hth-mem-detail">— MB / — MB</div>
+        </div>
+        <div class="health-card">
+          <div class="health-card-title">CPU Temperature</div>
+          <div class="health-big" id="hth-temp-val">—</div>
+          <div class="health-sub" id="hth-uptime">Uptime: —</div>
+        </div>
+      </div>
+
+      <div class="health-row">
+        <div class="health-card health-card-wide">
+          <div class="health-card-title">Disk  <span class="health-sub">/opt/can_sniffer</span></div>
+          <div class="health-big" id="hth-disk-val">—</div>
+          <div class="health-bar-track"><div class="health-bar-fill" id="hth-disk-bar"></div></div>
+          <div class="health-sub" id="hth-disk-detail">— GB / — GB</div>
         </div>
       </div>
 
