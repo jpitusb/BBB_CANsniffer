@@ -46,7 +46,15 @@ register uint32_t __R31 __asm__("r31");
  * Blind period after each detected SOF: 100 µs = 100 000 IEP ticks.
  * Skips within-frame data-bit edges before re-arming for the next SOF.
  */
-#define BLIND_COUNTS            1000000u  /* 1 ms → ~1000 events/sec max */
+#define BLIND_COUNTS            10000000u /* 10 ms → ~100 events/sec max.
+                                           * Caps PRU-driven Python fan-out on
+                                           * the single-core ARM. On an idle bus
+                                           * P8.46 re-asserts every blind period,
+                                           * so this directly sets the phantom-
+                                           * event ceiling. Lower it (toward
+                                           * 1000000u = 1 ms) only if you need
+                                           * higher SOF coverage on a busy bus
+                                           * and have CPU headroom. */
 
 /* ── OCP / IEP helpers (same as before) ─────────────────────────────────── */
 

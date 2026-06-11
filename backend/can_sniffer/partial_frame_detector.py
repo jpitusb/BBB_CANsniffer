@@ -58,4 +58,6 @@ class PartialFrameDetector:
                         cb(evt)
                 else:
                     break
-            await asyncio.sleep(0.001)
+            await asyncio.sleep(0.01)   # 10 ms: abort detection has a 5 ms
+                                        # timeout anyway, so 100 Hz scanning is
+                                        # ample and cuts event-loop wakeups 10x.

@@ -141,7 +141,9 @@ async def _pru_reader_loop(pru: PruShm, correlator: Correlator,
             pfd.ingest_pru(event)
             _diag.ingest_pru_event(event)
             _logger.log_pru_event(event)
-        await asyncio.sleep(0.001)
+        await asyncio.sleep(0.005)  # 5 ms: drain() batches, so 200 Hz polling
+                                    # loses almost no latency vs 1 ms (1000 Hz)
+                                    # while cutting event-loop wakeups 5x.
 
 
 async def _can_reader_loop(reader: SocketCanReader, correlator: Correlator) -> None:
