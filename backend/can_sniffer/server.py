@@ -28,7 +28,7 @@ from .timing_stats import TimingStatsCollector
 from .trigger_capture import TriggerCapture, TriggerCondition
 
 FRONTEND_DIR      = Path(__file__).parent.parent.parent / "frontend"
-UPDATE_INTERVAL_S = 0.1    # 10 Hz
+UPDATE_INTERVAL_S = 0.2    # 5 Hz — ample for a human-watched diagnostic view
 TIMEOUT_CHECK_S   = 0.1
 DB_PATH           = Path(os.environ.get("CAN_SNIFFER_DB",
                          "/opt/can_sniffer/data/diagnostics.db"))
@@ -103,19 +103,14 @@ async def index() -> FileResponse:
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
-    last_sent = 0
+    last_total = 0
     try:
         while True:
-            frames = _frame_store.snapshot()
-            n      = len(frames)
-            # last_sent tracks position in a monotonically-growing list;
-            # once the circular buffer (maxlen=1000) is full it stays at 1000.
-            # When last_sent >= n the buffer has wrapped — send the whole
-            # snapshot so the client gets a full refresh.
-            if last_sent >= n:
-                last_sent = 0
-            new_frames = [f.to_dict() for f in frames[last_sent:]]
-            last_sent  = n
+            # Send only frames appended since the last tick. (The previous
+            # index-based scheme re-sent and re-serialised all 1000 frames
+            # every tick once the ring buffer filled — the dominant CPU cost.)
+            new_objs, last_total = _frame_store.since(last_total)
+            new_frames = [f.to_dict() for f in new_objs]
             await websocket.send_text(json.dumps({
                 "type":     "update",
                 "frames":   new_frames,
