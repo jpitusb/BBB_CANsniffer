@@ -41,9 +41,7 @@ class PruShm:
                 "firmware may not be running or OCP not pre-enabled"
             )
         self._read_idx: int = 0
-        # Calibrate: convert PRU IEP nanoseconds to Unix time_ns once at startup.
-        # Drift is ~50 ppm on AM335x — acceptable for per-frame correlation.
-        self.epoch_offset_ns: int = time.time_ns() - self._latest_pru_ns()
+        self.epoch_offset_ns: int = self._calibrate()
 
     # ------------------------------------------------------------------
 
@@ -60,11 +58,36 @@ class PruShm:
         _, _, _, t_fall_ns, _ = _EVT.unpack_from(self._mm, offset)
         return t_fall_ns
 
+    def _calibrate(self) -> int:
+        """Return epoch_offset_ns = Unix_now - latest_pru_ns, or Unix_now if no events."""
+        latest = self._latest_pru_ns()
+        return time.time_ns() - latest  # latest==0 gives Unix_now (still usable)
+
     # ------------------------------------------------------------------
 
     def drain(self) -> Iterator[PruEvent]:
         """Yield all new events since the last drain() call."""
         write_idx = self._write_idx()
+
+        # Detect PRU restart: firmware resets write_idx to 0 and IEP to 0.
+        # If write_idx fell behind our read cursor by more than the ring depth,
+        # the PRU restarted — reset and recalibrate.
+        read_mod = self._read_idx & 0xFFFFFFFF
+        if write_idx != read_mod and (read_mod - write_idx) & 0xFFFFFFFF < PRU_RING_DEPTH:
+            # write_idx is slightly behind due to normal ring wrap — fine.
+            pass
+        elif write_idx == 0 and self._read_idx > PRU_RING_DEPTH:
+            # write_idx reset to 0 while we've read many events → PRU restart.
+            self._read_idx = 0
+            self.epoch_offset_ns = self._calibrate()
+
+        # Recalibrate epoch every poll to compensate for drift and handle
+        # cases where the server started before the PRU had any events.
+        if write_idx != self._read_idx:
+            latest = self._latest_pru_ns()
+            if latest > 0:
+                self.epoch_offset_ns = time.time_ns() - latest
+
         while self._read_idx != write_idx:
             idx    = self._read_idx & (PRU_RING_DEPTH - 1)
             offset = _EVT_OFFSET + idx * _EVT.size
