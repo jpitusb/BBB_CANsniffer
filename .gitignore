@@ -31,3 +31,5 @@ dts/*.dtbo
 *.swo
 .idea/
 .vscode/
+frontend/uPlot.iife.min.js
+frontend/uPlot.min.css
