@@ -2,7 +2,7 @@
  * PRU0 CAN RX timestamp firmware for AM335x BeagleBone Black.
  *
  * Uses the PRUSS INTC (Interrupt Controller) to detect CAN dominant edges.
- * P8.46 (GPIO2_7) is configured as a GPIO with falling-edge interrupt.
+ * P8.08 (GPIO2_3) is configured as a GPIO with falling-edge interrupt.
  * GPIO2 bank-A interrupt → PRUSS system event 24 → channel 0 →
  * host interrupt 0 → R31[16].
  *
@@ -11,7 +11,7 @@
  * This bypasses the GPCFG0 bit-25 lock that permanently disables R31[15:0]
  * on this BBB/kernel combination.
  *
- * When CAN RX goes dominant (falling edge on P8.46 via 1 kΩ to P9.24),
+ * When CAN RX goes dominant (falling edge on P8.08 via 1 kΩ to P9.24),
  * R31[16] goes high.  The PRU reads IEP immediately (~25 ns jitter vs the
  * physical edge), writes an EVT_SOF event to the ring buffer, clears the
  * GPIO interrupt, waits a 100 µs blind period to skip within-frame bits,
@@ -33,7 +33,9 @@ register uint32_t __R31 __asm__("r31");
 /* GPIO2 registers (ARM physical 0x481AC000) — OMAP4-compatible offsets ---- */
 #define GPIO2_BASE              0x481AC000u
 #define GPIO_IRQSTATUS_0        0x02Cu   /* write 1 to clear bank-A status */
-#define GPIO2_7_MASK            (1u << 7)
+/* GPIO2_3 = P8.08 (moved from P8.46/GPIO2_7, a SYSBOOT pin that blocked boot).
+ * Same GPIO2 bank, so the PRUSS INTC routing (sysevt 24) is unchanged. */
+#define GPIO2_PIN_MASK          (1u << 3)
 
 /* PRUSS INTC system event for GPIO2 bank-A --------------------------------- */
 #define INTC_GPIO2A_EVENT       24u
@@ -178,12 +180,12 @@ static void write_event(uint8_t type, uint16_t seq,
 
 static inline void gpio2_irq_clear(void)
 {
-    /* Clear GPIO2_7 interrupt status via SBBO to ARM physical 0x481AC03C.
+    /* Clear the GPIO2_3 interrupt status via SBBO to ARM physical 0x481AC03C.
      * Must be done before clearing PRUSS INTC event so the GPIO line
      * de-asserts and the level-triggered event can fire again next time. */
     volatile uint32_t *clr =
         (volatile uint32_t *)(GPIO2_BASE + GPIO_IRQSTATUS_0);
-    *clr = GPIO2_7_MASK;
+    *clr = GPIO2_PIN_MASK;
 }
 
 static inline void intc_event_clear(void)
@@ -218,7 +220,7 @@ void main(void)
         /*
          * WAIT: spin until R31[16] goes high.
          * R31[16] = PRUSS INTC host interrupt 0 = GPIO2 bank-A interrupt
-         * = falling edge on P8.46 = CAN dominant (SOF start).
+         * = falling edge on P8.08 = CAN dominant (SOF start).
          * This bit is independent of GPCFG0 (GPI mux lock).
          */
         /* Wait for host interrupt 0 on R31[30] = GPIO2 bank-A interrupt */
