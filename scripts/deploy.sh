@@ -15,6 +15,7 @@ echo "Deploying to ${BBB_USER}@${BBB_HOST}:${DEST} ..."
 
 rsync -az --delete \
     --exclude='.git' \
+    --exclude='.claude' \
     --exclude='__pycache__' \
     --exclude='*.pyc' \
     --exclude='*.db' \
