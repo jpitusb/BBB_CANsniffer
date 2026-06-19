@@ -64,7 +64,7 @@ echo "PRU state: $(cat $RPROC/state)"
 # 6. Bring up can1 in normal mode (transmitter), then set P9.24/P9.26 to CAN mode.
 # DCAN1 overlay has no pinctrl-0, so the driver never touches these pins.
 ip link set can1 down 2>/dev/null || true
-ip link set can1 type can bitrate 500000 listen-only off berr-reporting on restart-ms 100
+ip link set can1 type can bitrate 1000000 listen-only off berr-reporting on restart-ms 100
 ip link set can1 up
 echo can > /sys/devices/platform/ocp/ocp:P9_26_pinmux/state
 echo can > /sys/devices/platform/ocp/ocp:P9_24_pinmux/state

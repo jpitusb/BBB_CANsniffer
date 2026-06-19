@@ -32,13 +32,16 @@
 #define EVT_DOMINANT_RUNAWAY 0x03
 
 /*
- * Bit-timing thresholds in IEP counts (5 ns/tick at 200 MHz PRU clock).
- * Defaults are for 500 kbit/s (2000 ns/bit).  Recompile pru firmware when
- * changing bus bitrate; Python reads these indirectly via the same header.
+ * Bit-timing thresholds from the original bit-classification design.
+ * NOTE: these are NOT referenced by the current firmware — main.c only uses
+ * the fixed BLIND_COUNTS event-rate limit, which is bitrate-independent.  They
+ * are kept for documentation only; changing the bus bitrate (now 1 Mbit/s)
+ * does NOT require recompiling the PRU firmware.  (Original values assumed
+ * 500 kbit/s / 2000 ns per bit.)
  */
-#define GLITCH_THRESHOLD_COUNTS  200U   /* 1000 ns = 0.5 bit  */
-#define SOF_MAX_COUNTS          4000U   /* 20000 ns = 10 bits */
-#define IFS_COUNTS              1200U   /* 6000 ns = 3 bits (Intermission Frame Space) */
+#define GLITCH_THRESHOLD_COUNTS  200U   /* unused */
+#define SOF_MAX_COUNTS          4000U   /* unused */
+#define IFS_COUNTS              1200U   /* unused */
 
 /*
  * One ring buffer slot.  Layout must match Python struct "<BBHQI" (16 bytes):

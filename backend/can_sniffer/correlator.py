@@ -10,7 +10,7 @@ import can
 from .models import EnrichedFrame, PruEvent, PruEventType
 
 # Maximum time between a PRU SOF capture and the matching SocketCAN frame delivery.
-# At 500 kbit/s, a max-length frame (extended + 8 B data) takes ~260 µs.
+# At 1 Mbit/s, a max-length frame (extended + 8 B data) takes ~130 µs.
 # Linux socket delivery latency worst-case ~500 µs.  5 ms gives a 10x safety margin
 # while still being short enough to detect genuinely aborted frames quickly.
 _DEFAULT_MAX_DELTA_NS = 5_000_000  # 5 ms

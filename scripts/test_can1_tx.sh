@@ -12,7 +12,7 @@
 
 set -e
 
-BITRATE=500000
+BITRATE=1000000
 LOOP=false
 [ "${1:-}" = "--loop" ] && LOOP=true
 

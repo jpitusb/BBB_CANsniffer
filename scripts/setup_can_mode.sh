@@ -9,7 +9,7 @@
 set -e
 
 MODE=${1:-listen}
-BITRATE=500000
+BITRATE=1000000
 
 ip link set can1 down 2>/dev/null || true
 

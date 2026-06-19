@@ -455,9 +455,9 @@ echo "127.0.1.1 can-sniffer" | sudo tee -a /etc/hosts
 #### 2. Bring up the CAN interface
 
 ```bash
-sudo /opt/can_sniffer/scripts/setup_can.sh 500000
+sudo /opt/can_sniffer/scripts/setup_can.sh 1000000
 ip -details link show can1
-# Expected: state UP, bitrate 500000, listen-only in ctrlmodes
+# Expected: state UP, bitrate 1000000, listen-only in ctrlmodes
 ```
 
 #### 3. Verify frame reception
@@ -722,9 +722,12 @@ WHERE severity = 'CRITICAL' ORDER BY ts DESC;
 |----------|---------|-------------|
 | `CAN_SNIFFER_DB` | `/opt/can_sniffer/data/diagnostics.db` | SQLite database path |
 
-Everything else (`can1` interface, 500 kbit/s bitrate, port 8000) is currently hardcoded.
-The CAN bitrate thresholds are compiled into the PRU firmware (`shared_mem.h`); change them
-there and rebuild before changing the bitrate passed to `setup_can.sh`.
+Everything else (`can1` interface, 1 Mbit/s bitrate, port 8000) is currently hardcoded.
+The bus bitrate is set in two places: the `ip link` bitrate in the `setup_can*.sh` scripts
+and the `BusLoadMonitor` default in `bus_load.py` (used for the bus-load percentage).
+The `*_COUNTS` thresholds in `shared_mem.h` are **not** wired into the current PRU firmware
+(`main.c` only uses the fixed `BLIND_COUNTS` rate limit), so no firmware rebuild is needed
+to change the bitrate.
 
 ### Latency address pairs
 
@@ -791,15 +794,18 @@ sudo systemctl restart pru-loader.service
 
 ### Changing CAN bitrate
 
-The bit-timing thresholds in `shared_mem.h` are compiled into the PRU firmware:
+The bus currently runs at **1 Mbit/s**. To change it, update both places that carry the
+rate — no PRU firmware rebuild is required:
 
-```c
-#define GLITCH_THRESHOLD_COUNTS  200U   /* 1000 ns = 0.5 bit at 500 kbit/s */
-#define SOF_MAX_COUNTS          4000U   /* 20000 ns = 10 bits               */
-#define IFS_COUNTS              1200U   /* 6000 ns = 3 bits (IFS)           */
-```
+1. The `ip link ... bitrate` value in `scripts/setup_can.sh` (default arg),
+   `scripts/setup_can_mode.sh`, and `scripts/test_can1_tx.sh`.
+2. The `BusLoadMonitor(bitrate=...)` default in `backend/can_sniffer/bus_load.py`,
+   which is the denominator for the bus-load percentage.
 
-If you change the bus bitrate, recalculate these constants (IEP ticks = time_ns / 1, since 1 tick = 1 ns at DEFAULT_INC=5) and rebuild the PRU firmware before restarting. The Python backend reads the bitrate from `CAN_BITRATE` at startup and does not need recompilation.
+The `GLITCH_THRESHOLD_COUNTS` / `SOF_MAX_COUNTS` / `IFS_COUNTS` defines in `shared_mem.h`
+are **not referenced** by the current firmware — `main.c` only uses the fixed
+`BLIND_COUNTS` event-rate limit (10 ms), which is bitrate-independent. They are left in
+the header as documentation of the original bit-timing design.
 
 ### `shared_mem.h` is the cross-language contract
 

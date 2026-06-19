@@ -18,7 +18,7 @@ def _frame_bit_length(dlc: int) -> int:
 
 
 class BusLoadMonitor:
-    def __init__(self, bitrate: int = 500_000, window_s: float = _WINDOW_S) -> None:
+    def __init__(self, bitrate: int = 1_000_000, window_s: float = _WINDOW_S) -> None:
         self._bitrate  = bitrate
         self._window_s = window_s
         # Each entry: (timestamp_ns, bit_length)
