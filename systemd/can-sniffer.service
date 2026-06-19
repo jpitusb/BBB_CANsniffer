@@ -9,7 +9,7 @@ User=root
 WorkingDirectory=/opt/can_sniffer/backend
 Environment=PYTHONPATH=/home/lauren/.local/lib/python3.11/site-packages
 Environment=CAN_SNIFFER_DB=/opt/can_sniffer/data/diagnostics.db
-ExecStartPre=/opt/can_sniffer/scripts/setup_can.sh 1000000
+ExecStartPre=/opt/can_sniffer/scripts/setup_can.sh 1000000 off
 ExecStart=/usr/bin/python3.11 -m can_sniffer.server
 Restart=on-failure
 RestartSec=5
