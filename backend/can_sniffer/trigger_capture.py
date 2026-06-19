@@ -86,6 +86,12 @@ class TriggerCapture:
     # ── Frame ingestion ───────────────────────────────────────────────
 
     def ingest(self, frame, bus_load: float) -> None:
+        # Lock-free fast path: idle is the normal state and this runs per frame
+        # (~2360/s at 1 Mbit/s). A stale read at worst defers an arm by one
+        # frame; the locked block below re-checks. Avoids a lock acquire/release
+        # on the single-core ARM for every frame when nothing is armed.
+        if self._state == "idle":
+            return
         with self._lock:
             if self._state == "idle":
                 return

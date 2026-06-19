@@ -30,6 +30,11 @@ from .trigger_capture import TriggerCapture, TriggerCondition
 FRONTEND_DIR      = Path(__file__).parent.parent.parent / "frontend"
 UPDATE_INTERVAL_S = 0.2    # 5 Hz — ample for a human-watched diagnostic view
 TIMEOUT_CHECK_S   = 0.1
+# Max frames serialised into a single WS update. A busy 1 Mbit/s bus produces
+# ~2360 frames/s (~470 per 5 Hz tick); a human-watched view can't use that many,
+# and every frame is still persisted to the DB by DiagLogger. Capping the live
+# stream bounds the dominant to_dict + json.dumps cost on the single-core ARM.
+MAX_WS_FRAMES_PER_TICK = 100
 DB_PATH           = Path(os.environ.get("CAN_SNIFFER_DB",
                          "/opt/can_sniffer/data/diagnostics.db"))
 PAIRS_PATH        = Path("/opt/can_sniffer/data/latency_pairs.json")
@@ -71,9 +76,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     pfd.add_callback(_diag.ingest_abort)
 
+    # Drain the raw CAN socket directly from the event loop. add_reader fires
+    # this in the main thread whenever the fd is readable — no executor thread,
+    # so no GIL ping-pong on the single core. recv_batch drains all queued
+    # frames; if more than its cap remain, the fd stays readable and we refire.
+    loop = asyncio.get_event_loop()
+
+    def _on_can_readable() -> None:
+        for msg in reader.recv_batch():
+            if msg.is_error_frame:
+                err = _diag.ingest_error_frame(msg)
+                if err is not None:
+                    _logger.log_error(err)
+            else:
+                correlator.ingest_frame(msg)
+
+    loop.add_reader(reader.fileno(), _on_can_readable)
+
     tasks = [
         asyncio.create_task(_ingest_loop(pru, correlator, pfd)),
-        asyncio.create_task(_can_reader_loop(reader, correlator)),
         asyncio.create_task(tec_rec.run()),
         asyncio.create_task(_timeout_loop()),
         asyncio.create_task(_logger.run()),
@@ -82,6 +103,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        loop.remove_reader(reader.fileno())
         for t in tasks:
             t.cancel()
         pru.close()
@@ -110,6 +132,10 @@ async def ws_endpoint(websocket: WebSocket) -> None:
             # index-based scheme re-sent and re-serialised all 1000 frames
             # every tick once the ring buffer filled — the dominant CPU cost.)
             new_objs, last_total = _frame_store.since(last_total)
+            # Cap frames per tick (see MAX_WS_FRAMES_PER_TICK). On a burst we
+            # send the most recent ones; the full record stays in the DB.
+            if len(new_objs) > MAX_WS_FRAMES_PER_TICK:
+                new_objs = new_objs[-MAX_WS_FRAMES_PER_TICK:]
             new_frames = [f.to_dict() for f in new_objs]
             await websocket.send_text(json.dumps({
                 "type":     "update",
@@ -159,20 +185,6 @@ async def _ingest_loop(pru: PruShm, correlator: Correlator,
             _trigger.ingest(frame, _bus_load.current())
         pfd.sweep_timeouts()
         await asyncio.sleep(0.02)
-
-
-async def _can_reader_loop(reader: SocketCanReader, correlator: Correlator) -> None:
-    _loop = asyncio.get_event_loop()
-    while True:
-        # asyncio.to_thread added in 3.9; use run_in_executor for Python 3.7 compat
-        msg = await _loop.run_in_executor(None, reader.recv_one)
-        if msg is not None:
-            if msg.is_error_frame:
-                err = _diag.ingest_error_frame(msg)
-                if err is not None:
-                    _logger.log_error(err)
-            else:
-                correlator.ingest_frame(msg)
 
 
 async def _capture_logger_loop() -> None:
