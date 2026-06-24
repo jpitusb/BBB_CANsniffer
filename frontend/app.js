@@ -13,11 +13,10 @@ let ringHead     = 0;     // index of oldest entry
 let ringCount    = 0;
 let paused       = false;
 let filterText   = "";
-let lastIdTs     = new Map();   // arb_id -> last pru_ts_ns for delta calculation
+let lastIdTs     = new Map();   // arb_id -> last kernel_ts for inter-frame delta
 let seenIds      = new Set();
 let totalFrames  = 0;
 let totalErrors  = 0;
-let totalAborts  = 0;
 let reconnectMs  = RECONNECT_BASE_MS;
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
@@ -115,10 +114,11 @@ function connect() {
 function ingestFrame(f) {
   const idKey = f.arb_id;
   const prev  = lastIdTs.get(idKey);
-  f.delta_us  = (prev !== undefined && f.pru_ts_ns !== null)
-    ? Math.round((f.pru_ts_ns - prev) / 1000)
+  // Inter-frame interval for this ID, in µs, from the kernel RX timestamp.
+  f.delta_us  = (prev !== undefined && f.kernel_ts != null)
+    ? Math.round((f.kernel_ts - prev) * 1e6)
     : null;
-  if (f.pru_ts_ns !== null) lastIdTs.set(idKey, f.pru_ts_ns);
+  if (f.kernel_ts != null) lastIdTs.set(idKey, f.kernel_ts);
 
   // Assign stable hue per ID for row colouring
   const idNum = parseInt(f.arb_id, 16);
@@ -156,7 +156,6 @@ function renderTable() {
     const tr = document.createElement("tr");
     tr.style.background = `hsla(${f._hue},30%,18%,0.5)`;
     tr.innerHTML =
-      `<td>${f.pru_ts_ns ?? "—"}</td>` +
       `<td>${f.kernel_ts != null ? f.kernel_ts.toFixed(6) : "—"}</td>` +
       `<td>${f.arb_id}</td>` +
       `<td>${f.dlc}</td>` +
@@ -199,14 +198,6 @@ function updateDiag(diag) {
   document.getElementById("cnt-form").textContent  = pe.form_errors  ?? 0;
   document.getElementById("cnt-ack").textContent   = pe.ack_errors   ?? 0;
 
-  // Signal quality
-  const sq = diag.signal_quality || {};
-  document.getElementById("cnt-glitch").textContent = sq.glitches_1s ?? 0;
-  document.getElementById("cnt-abort").textContent  = sq.aborts_1s   ?? 0;
-  const rb = document.getElementById("runaway-badge");
-  rb.textContent  = sq.dominant_runaway ? "ACTIVE" : "OK";
-  rb.className    = "badge " + (sq.dominant_runaway ? "badge-busoff" : "badge-ok");
-
   // Missing messages
   const missing = (diag.behavioral || {}).missing_msgs || [];
   const missingDiv = document.getElementById("missing-msgs");
@@ -245,9 +236,7 @@ function updateDiag(diag) {
 
   // Session stats
   totalErrors = Object.values(pe).reduce((s, v) => s + v, 0);
-  totalAborts = (sq.aborts_1s ?? 0);  // approximation; logger has the real count
   document.getElementById("stat-errs").textContent   = totalErrors;
-  document.getElementById("stat-aborts").textContent = totalAborts;
 }
 
 function updateBusStateBadge(state) {
@@ -408,7 +397,7 @@ tbody.addEventListener("dblclick", async (e) => {
   if (!tr) return;
   const cells = tr.querySelectorAll("td");
   if (cells.length < 2) return;
-  // cells[0] = PRU ts / kernel_ts, cells[1] = arb_id
+  // cells[0] = kernel_ts, cells[1] = arb_id
   const tsRaw   = cells[0].textContent.trim();
   const idRaw   = cells[1].textContent.trim();
   const note    = prompt(`Annotate frame ${idRaw}:`);

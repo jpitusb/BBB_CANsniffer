@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 import can
 
@@ -15,10 +15,7 @@ from .models import (
     BusState,
     EnrichedFrame,
     ErrorEvent,
-    PruEvent,
-    PruEventType,
 )
-from .signal_quality_monitor import SignalQualityMonitor
 from .tec_rec_poller import TecRecPoller
 
 _ERR_BURST_THRESHOLD = 3   # SocketCAN error frames per second → REPEATED_ERROR_FRAMES
@@ -36,12 +33,15 @@ class DiagnosticsAggregator:
         self,
         behavioral_monitor: Optional[BehavioralMonitor] = None,
         tec_rec_poller:     Optional[TecRecPoller]      = None,
+        on_alert:           Optional[Callable[[Alert], None]] = None,
     ) -> None:
-        self._sqm      = SignalQualityMonitor()
         self._decoder  = ErrorDecoder()
         self._alerts   = AlertManager()
         self._behav    = behavioral_monitor
         self._tec_rec  = tec_rec_poller
+        # Called with every alert that AlertManager actually broadcasts (new or
+        # re-fired after cooldown). Used to persist alerts to the DB.
+        self._on_alert = on_alert
 
         # Rolling 1-second error frame counter
         self._err_ts:   list[float] = []
@@ -56,14 +56,6 @@ class DiagnosticsAggregator:
         }
 
     # ------------------------------------------------------------------
-
-    def ingest_pru_event(self, event: PruEvent) -> None:
-        self._sqm.ingest_pru_event(event)
-        self._flush_alerts()
-
-    def ingest_abort(self, evt) -> None:
-        self._sqm.ingest_abort(evt)
-        self._flush_alerts()
 
     def ingest_error_frame(self, msg: can.Message) -> Optional[ErrorEvent]:
         err = self._decoder.decode(msg)
@@ -106,7 +98,6 @@ class DiagnosticsAggregator:
 
     def snapshot(self) -> dict:
         tec_rec = self._tec_rec.snapshot() if self._tec_rec else {"tec": 0, "rec": 0, "state": "unknown"}
-        sqm     = self._sqm.snapshot()
         behav: dict = {}
         if self._behav:
             behav = {
@@ -119,7 +110,6 @@ class DiagnosticsAggregator:
         return {
             "bus_health":    {**tec_rec, "error_frames_1s": len(self._err_ts)},
             "protocol_errors": self._proto_counts,
-            "signal_quality":  sqm,
             "behavioral":      behav,
             "alerts":         [a.to_dict() for a in self._alerts.active_alerts()[-20:]],
         }
@@ -127,16 +117,14 @@ class DiagnosticsAggregator:
     # ------------------------------------------------------------------
 
     def _submit(self, alert: Alert) -> None:
-        self._alerts.submit(alert)
-
-    def _flush_alerts(self) -> None:
-        for a in self._sqm.drain_alerts():
-            self._alerts.submit(a)
+        broadcast = self._alerts.submit(alert)
+        if broadcast is not None and self._on_alert is not None:
+            self._on_alert(broadcast)
 
     def _flush_behavioural_alerts(self) -> None:
         if self._behav:
             for a in self._behav.drain_alerts():
-                self._alerts.submit(a)
+                self._submit(a)
 
     def _update_proto_counts(self, err: ErrorEvent) -> None:
         if err.bit_error:   self._proto_counts["bit_errors"]   += 1

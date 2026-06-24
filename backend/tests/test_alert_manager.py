@@ -5,7 +5,7 @@ from can_sniffer.alert_manager import AlertManager
 from can_sniffer.models import Alert, AlertCategory, AlertSeverity
 
 
-def make_alert(cat: AlertCategory = AlertCategory.GLITCH_BURST,
+def make_alert(cat: AlertCategory = AlertCategory.BABBLING_TX,
                can_id: int = None) -> Alert:
     return Alert(
         alert_id = Alert.make_id(cat, can_id, None),
@@ -48,8 +48,8 @@ class TestAlertManager:
 
     def test_resolve_clears_alert(self):
         mgr = AlertManager()
-        mgr.submit(make_alert(AlertCategory.GLITCH_BURST, can_id=None))
-        mgr.resolve(AlertCategory.GLITCH_BURST)
+        mgr.submit(make_alert(AlertCategory.BABBLING_TX, can_id=None))
+        mgr.resolve(AlertCategory.BABBLING_TX)
         assert len(mgr.active_alerts()) == 0
 
     def test_different_can_ids_independent(self):

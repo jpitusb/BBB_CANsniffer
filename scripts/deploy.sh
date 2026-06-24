@@ -41,11 +41,11 @@ find /opt/can_sniffer/scripts /opt/can_sniffer/tools -name "*.sh" -o -name "gene
 echo "Reloading systemd and restarting services..."
 echo "${SUDO_PASS:-}" | sudo -S systemctl daemon-reload 2>/dev/null || \
     sudo systemctl daemon-reload
-echo "${SUDO_PASS:-}" | sudo -S systemctl restart pru-loader.service can-sniffer.service 2>/dev/null || \
-    sudo systemctl restart pru-loader.service can-sniffer.service
+echo "${SUDO_PASS:-}" | sudo -S systemctl restart can-sniffer.service 2>/dev/null || \
+    sudo systemctl restart can-sniffer.service
 
 # Wait briefly then check
 sleep 3
-sudo systemctl is-active pru-loader can-sniffer
+sudo systemctl is-active can-sniffer
 echo "Deploy complete — dashboard at http://$(hostname -I | awk '{print $1}'):8000/"
 REMOTE

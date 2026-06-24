@@ -8,7 +8,7 @@ from can_sniffer.models import EnrichedFrame
 def make_frame(dlc: int = 8, ts: float = 0.0) -> EnrichedFrame:
     return EnrichedFrame(
         arb_id=0x100, dlc=dlc, data=b"\x00" * dlc,
-        is_extended=False, pru_ts_ns=None, kernel_ts=ts,
+        is_extended=False, kernel_ts=ts,
     )
 
 

@@ -38,7 +38,7 @@ BO_ 256 EngineStatus: 8 Vector__XXX
 def make_frame(arb_id: int = 0x100, dlc: int = 8, data: bytes = b"\x00" * 8) -> EnrichedFrame:
     return EnrichedFrame(
         arb_id=arb_id, dlc=dlc, data=data,
-        is_extended=False, pru_ts_ns=None, kernel_ts=time.time(),
+        is_extended=False, kernel_ts=time.time(),
     )
 
 

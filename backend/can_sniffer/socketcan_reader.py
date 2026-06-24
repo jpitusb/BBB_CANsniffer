@@ -58,8 +58,9 @@ class SocketCanReader:
         # working (kernel emits these with CAN_ERR_FLAG set on bus errors).
         self._sock.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_ERR_FILTER,
                               CAN_ERR_MASK)
-        # Ask the kernel to attach the RX timestamp as ancillary data so we keep
-        # the same timing source the correlator matched PRU SOFs against.
+        # Ask the kernel to attach the RX timestamp as ancillary data, giving
+        # microsecond-resolution frame timestamps independent of when userspace
+        # gets scheduled.
         try:
             self._sock.setsockopt(socket.SOL_SOCKET, SO_TIMESTAMP, 1)
             self._timestamping = True

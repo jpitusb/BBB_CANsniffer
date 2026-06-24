@@ -4,9 +4,10 @@ import asyncio
 import sqlite3
 import time
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 
-from .models import Alert, EnrichedFrame, ErrorEvent, PruEvent, PruEventType
+from .models import Alert, EnrichedFrame, ErrorEvent
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -20,9 +21,7 @@ CREATE TABLE IF NOT EXISTS can_frames (
     can_id      INTEGER NOT NULL,
     is_extended INTEGER NOT NULL DEFAULT 0,
     dlc         INTEGER NOT NULL,
-    data        BLOB,
-    pru_ts_ns   INTEGER,
-    is_aborted  INTEGER NOT NULL DEFAULT 0
+    data        BLOB
 );
 CREATE INDEX IF NOT EXISTS idx_frames_ts    ON can_frames(ts);
 CREATE INDEX IF NOT EXISTS idx_frames_id    ON can_frames(can_id);
@@ -37,16 +36,6 @@ CREATE TABLE IF NOT EXISTS error_events (
     bus_state   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_errors_ts ON error_events(ts);
-
-CREATE TABLE IF NOT EXISTS pru_events (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts          REAL    NOT NULL,
-    event_type  INTEGER NOT NULL,
-    pru_ts_ns   INTEGER NOT NULL,
-    pulse_ns    INTEGER,
-    matched     INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_pru_ts ON pru_events(ts);
 
 CREATE TABLE IF NOT EXISTS behavioral_alerts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,11 +80,10 @@ CREATE TABLE IF NOT EXISTS frame_annotations (
 CREATE INDEX IF NOT EXISTS idx_ann_ts ON frame_annotations(kernel_ts);
 """
 
-# Retention: frames 7 days, PRU events 30 days, alerts 90 days
+# Retention: frames 7 days, errors 7 days, alerts 90 days
 _RETENTION_SQL = """
 DELETE FROM can_frames        WHERE ts < (strftime('%s','now') - 86400 * 7);
 DELETE FROM error_events      WHERE ts < (strftime('%s','now') - 86400 * 7);
-DELETE FROM pru_events        WHERE ts < (strftime('%s','now') - 86400 * 30);
 DELETE FROM behavioral_alerts WHERE ts < (strftime('%s','now') - 86400 * 90);
 DELETE FROM bus_state_log     WHERE ts < (strftime('%s','now') - 86400 * 30);
 DELETE FROM captures          WHERE trigger_ts < (strftime('%s','now') - 86400 * 30);
@@ -110,9 +98,13 @@ class DiagLogger:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         self._conn:   Optional[sqlite3.Connection] = None
+        # Buffers are appended from the event-loop thread and flushed from a
+        # worker thread (asyncio.to_thread). _lock guards every append and the
+        # buffer swap in _flush so no record is lost in the gap between the DB
+        # write and the buffer reset.
+        self._lock = Lock()
         self._frame_buf:  list = []
         self._error_buf:  list = []
-        self._pru_buf:    list = []
         self._alert_buf:  list = []
         self._busst_buf:  list = []
         self._cap_buf:    list = []
@@ -131,63 +123,58 @@ class DiagLogger:
 
     # ------------------------------------------------------------------
 
-    def log_frame(self, frame: EnrichedFrame, is_aborted: bool = False) -> None:
-        self._frame_buf.append((
-            frame.kernel_ts,
-            frame.arb_id,
-            int(frame.is_extended),
-            frame.dlc,
-            frame.data,
-            frame.pru_ts_ns,
-            int(is_aborted),
-        ))
+    def log_frame(self, frame: EnrichedFrame) -> None:
+        with self._lock:
+            self._frame_buf.append((
+                frame.kernel_ts,
+                frame.arb_id,
+                int(frame.is_extended),
+                frame.dlc,
+                frame.data,
+            ))
 
     def log_error(self, err: ErrorEvent, bus_state: Optional[str] = None) -> None:
-        self._error_buf.append((
-            err.ts,
-            err.error_class,
-            err.raw_data,
-            err.tec,
-            err.rec,
-            bus_state,
-        ))
-
-    def log_pru_event(self, event: PruEvent, matched: bool = False) -> None:
-        self._pru_buf.append((
-            time.time(),
-            event.type.value,
-            event.t_fall_ns,
-            event.pulse_ns if event.type is not PruEventType.SOF else None,
-            int(matched),
-        ))
+        with self._lock:
+            self._error_buf.append((
+                err.ts,
+                err.error_class,
+                err.raw_data,
+                err.tec,
+                err.rec,
+                bus_state,
+            ))
 
     def log_alert(self, alert: Alert) -> None:
-        self._alert_buf.append((
-            alert.ts,
-            alert.severity.value,
-            alert.category.value,
-            alert.can_id,
-            alert.signal_name,
-            alert.msg,
-            int(alert.resolved),
-            alert.resolved_ts,
-        ))
+        with self._lock:
+            self._alert_buf.append((
+                alert.ts,
+                alert.severity.value,
+                alert.category.value,
+                alert.can_id,
+                alert.signal_name,
+                alert.msg,
+                int(alert.resolved),
+                alert.resolved_ts,
+            ))
 
     def log_bus_state(self, tec: int, rec: int, state: str) -> None:
-        self._busst_buf.append((time.time(), tec, rec, state))
+        with self._lock:
+            self._busst_buf.append((time.time(), tec, rec, state))
 
     def log_capture(self, session: dict) -> None:
         import json
-        self._cap_buf.append((
-            session["id"],
-            session["trigger_ts"],
-            session["condition_type"],
-            session["frame_count"],
-            json.dumps({"pre": session["pre_frames"], "post": session["post_frames"]}),
-        ))
+        with self._lock:
+            self._cap_buf.append((
+                session["id"],
+                session["trigger_ts"],
+                session["condition_type"],
+                session["frame_count"],
+                json.dumps({"pre": session["pre_frames"], "post": session["post_frames"]}),
+            ))
 
     def log_annotation(self, kernel_ts: float, arb_id: int, note: str) -> None:
-        self._ann_buf.append((kernel_ts, arb_id, note, time.time()))
+        with self._lock:
+            self._ann_buf.append((kernel_ts, arb_id, note, time.time()))
 
     # ------------------------------------------------------------------
 
@@ -203,45 +190,44 @@ class DiagLogger:
     def _flush(self) -> None:
         if not self._conn:
             return
+        # Detach the current buffers under the lock and replace them with fresh
+        # lists, so concurrent appends from the event-loop thread land in the
+        # new buffers and are never dropped between the write and the reset.
+        with self._lock:
+            frame_buf, self._frame_buf = self._frame_buf, []
+            error_buf, self._error_buf = self._error_buf, []
+            alert_buf, self._alert_buf = self._alert_buf, []
+            busst_buf, self._busst_buf = self._busst_buf, []
+            cap_buf,   self._cap_buf   = self._cap_buf,   []
+            ann_buf,   self._ann_buf   = self._ann_buf,   []
         with self._conn:
-            if self._frame_buf:
+            if frame_buf:
                 self._conn.executemany(
-                    "INSERT INTO can_frames(ts,can_id,is_extended,dlc,data,pru_ts_ns,is_aborted)"
-                    " VALUES(?,?,?,?,?,?,?)", self._frame_buf)
-                self._frame_buf.clear()
-            if self._error_buf:
+                    "INSERT INTO can_frames(ts,can_id,is_extended,dlc,data)"
+                    " VALUES(?,?,?,?,?)", frame_buf)
+            if error_buf:
                 self._conn.executemany(
                     "INSERT INTO error_events(ts,error_class,error_data,tec,rec,bus_state)"
-                    " VALUES(?,?,?,?,?,?)", self._error_buf)
-                self._error_buf.clear()
-            if self._pru_buf:
-                self._conn.executemany(
-                    "INSERT INTO pru_events(ts,event_type,pru_ts_ns,pulse_ns,matched)"
-                    " VALUES(?,?,?,?,?)", self._pru_buf)
-                self._pru_buf.clear()
-            if self._alert_buf:
+                    " VALUES(?,?,?,?,?,?)", error_buf)
+            if alert_buf:
                 self._conn.executemany(
                     "INSERT INTO behavioral_alerts"
                     "(ts,severity,category,can_id,signal_name,detail,resolved,resolved_ts)"
-                    " VALUES(?,?,?,?,?,?,?,?)", self._alert_buf)
-                self._alert_buf.clear()
-            if self._busst_buf:
+                    " VALUES(?,?,?,?,?,?,?,?)", alert_buf)
+            if busst_buf:
                 self._conn.executemany(
                     "INSERT INTO bus_state_log(ts,tec,rec,state) VALUES(?,?,?,?)",
-                    self._busst_buf)
-                self._busst_buf.clear()
-            if self._cap_buf:
+                    busst_buf)
+            if cap_buf:
                 self._conn.executemany(
                     "INSERT OR REPLACE INTO captures"
                     "(id,trigger_ts,condition_type,frame_count,data) VALUES(?,?,?,?,?)",
-                    self._cap_buf)
-                self._cap_buf.clear()
-            if self._ann_buf:
+                    cap_buf)
+            if ann_buf:
                 self._conn.executemany(
                     "INSERT INTO frame_annotations(kernel_ts,arb_id,note,created_ts)"
                     " VALUES(?,?,?,?)",
-                    self._ann_buf)
-                self._ann_buf.clear()
+                    ann_buf)
 
     def _purge(self) -> None:
         if self._conn:

@@ -2,30 +2,33 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
+import cantools
 import uvicorn
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from .behavioral_monitor import BehavioralMonitor
 from .bus_load import BusLoadMonitor
 from .correlator import Correlator
 from .diag_logger import DiagLogger
 from .diagnostics_aggregator import DiagnosticsAggregator
 from .frame_store import FrameStore
 from .latency_monitor import ExplicitPair, LatencyMonitor, PatternPair, load_pairs, save_pairs
-from .partial_frame_detector import PartialFrameDetector
-from .pru_shm import PruShm
 from .sequence_export import export_svg_from_session
 from .socketcan_reader import SocketCanReader
 from .tec_rec_poller import TecRecPoller
 from .system_health import SystemHealthMonitor
 from .timing_stats import TimingStatsCollector
 from .trigger_capture import TriggerCapture, TriggerCondition
+
+log = logging.getLogger(__name__)
 
 FRONTEND_DIR      = Path(__file__).parent.parent.parent / "frontend"
 UPDATE_INTERVAL_S = 0.2    # 5 Hz — ample for a human-watched diagnostic view
@@ -38,6 +41,27 @@ MAX_WS_FRAMES_PER_TICK = 100
 DB_PATH           = Path(os.environ.get("CAN_SNIFFER_DB",
                          "/opt/can_sniffer/data/diagnostics.db"))
 PAIRS_PATH        = Path("/opt/can_sniffer/data/latency_pairs.json")
+# Optional DBC for behavioral monitoring (cycle time, signal range, DLC, etc.).
+# Behavioral checks are disabled when this is unset or the file is missing.
+DBC_PATH          = os.environ.get("CAN_SNIFFER_DBC", "")
+BUS_STATE_LOG_S   = 1.0    # persist bus state at most this often (on change)
+
+
+def _load_behavioral_monitor() -> Optional[BehavioralMonitor]:
+    if not DBC_PATH:
+        log.warning("CAN_SNIFFER_DBC not set — behavioral monitoring disabled")
+        return None
+    path = Path(DBC_PATH)
+    if not path.exists():
+        log.warning("DBC %s not found — behavioral monitoring disabled", path)
+        return None
+    try:
+        db = cantools.database.load_file(str(path))
+    except Exception as exc:  # malformed DBC shouldn't take down the sniffer
+        log.error("Failed to load DBC %s: %s — behavioral monitoring disabled", path, exc)
+        return None
+    log.info("Loaded DBC %s (%d messages)", path, len(db.messages))
+    return BehavioralMonitor(db)
 
 # Module-level singletons — initialised in lifespan, used by WS handler and REST
 _frame_store:    FrameStore
@@ -57,11 +81,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _frame_store = FrameStore(maxlen=1000)
     _bus_load    = BusLoadMonitor()
     tec_rec      = TecRecPoller()
-    _diag        = DiagnosticsAggregator(tec_rec_poller=tec_rec)
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     _logger = DiagLogger(DB_PATH)
     _logger.open()
+
+    # Logger exists before the aggregator so every broadcast alert is persisted
+    # via the on_alert callback.
+    _diag = DiagnosticsAggregator(
+        behavioral_monitor = _load_behavioral_monitor(),
+        tec_rec_poller     = tec_rec,
+        on_alert           = _logger.log_alert,
+    )
 
     explicit, patterns = load_pairs(PAIRS_PATH)
     _timing  = TimingStatsCollector()
@@ -69,12 +100,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _trigger = TriggerCapture()
     _health  = SystemHealthMonitor()
 
-    pru        = PruShm()
-    correlator = Correlator(epoch_offset_ns=pru.epoch_offset_ns)
-    pfd        = PartialFrameDetector()
+    correlator = Correlator()
     reader     = SocketCanReader()
-
-    pfd.add_callback(_diag.ingest_abort)
 
     # Drain the raw CAN socket directly from the event loop. add_reader fires
     # this in the main thread whenever the fd is readable — no executor thread,
@@ -94,11 +121,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     loop.add_reader(reader.fileno(), _on_can_readable)
 
     tasks = [
-        asyncio.create_task(_ingest_loop(pru, correlator, pfd)),
+        asyncio.create_task(_ingest_loop(correlator)),
         asyncio.create_task(tec_rec.run()),
         asyncio.create_task(_timeout_loop()),
         asyncio.create_task(_logger.run()),
         asyncio.create_task(_capture_logger_loop()),
+        asyncio.create_task(_bus_state_logger_loop(tec_rec)),
     ]
     try:
         yield
@@ -106,7 +134,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         loop.remove_reader(reader.fileno())
         for t in tasks:
             t.cancel()
-        pru.close()
         reader.close()
         _logger.close()
 
@@ -152,30 +179,16 @@ async def ws_endpoint(websocket: WebSocket) -> None:
         pass
 
 
-async def _ingest_loop(pru: PruShm, correlator: Correlator,
-                       pfd: PartialFrameDetector) -> None:
-    """Coalesced PRU-drain + matched-frame-drain + abort sweep.
+async def _ingest_loop(correlator: Correlator) -> None:
+    """Drain buffered CAN frames every 20 ms and fan them out to all consumers.
 
-    Replaces three separate polling tasks (PRU reader, drain loop, pfd.run)
-    with one loop, cutting event-loop wakeups ~10x (the dominant CPU cost on
-    the single-core ARM).
-
-    Safe at 20 ms because the PRU writes each SOF to DDR at frame *start*,
-    before the kernel delivers the CAN frame to userspace — so the matching
-    PRU event is already queued when a frame arrives, and _try_match (run on
-    PRU ingest) fires before drain_matched's stale-flush in the same
-    iteration. Correlation uses timestamps, not queue residence time, so the
-    longer interval only delays dashboard display by <=20 ms.
+    Frames are enqueued by the socket-readable callback (in the event-loop
+    thread) and processed here in batches, keeping the hot callback cheap and
+    cutting event-loop wakeups on the single-core ARM. The 20 ms interval only
+    delays dashboard display by <=20 ms; every frame is still persisted.
     """
     while True:
-        for event in pru.drain():
-            correlator.ingest_pru(event)
-            pfd.ingest_pru(event)
-            _diag.ingest_pru_event(event)
-            _logger.log_pru_event(event)
         for frame in correlator.drain_matched():
-            if frame.pru_ts_ns is not None:
-                pfd.mark_matched()
             _frame_store.append(frame)
             _bus_load.record(frame)
             _diag.ingest_frame(frame)
@@ -183,7 +196,6 @@ async def _ingest_loop(pru: PruShm, correlator: Correlator,
             _timing.ingest(frame)
             _latency.ingest(frame)
             _trigger.ingest(frame, _bus_load.current())
-        pfd.sweep_timeouts()
         await asyncio.sleep(0.02)
 
 
@@ -199,6 +211,17 @@ async def _timeout_loop() -> None:
     while True:
         _diag.check_periodic_timeouts()
         await asyncio.sleep(TIMEOUT_CHECK_S)
+
+
+async def _bus_state_logger_loop(tec_rec: TecRecPoller) -> None:
+    """Persist TEC/REC/bus-state to the DB whenever it changes (checked at 1 Hz)."""
+    last: Optional[tuple] = None
+    while True:
+        snap = (tec_rec.tec, tec_rec.rec, tec_rec.state.value)
+        if snap != last:
+            _logger.log_bus_state(*snap)
+            last = snap
+        await asyncio.sleep(BUS_STATE_LOG_S)
 
 
 # ── Trigger endpoints ─────────────────────────────────────────────────────────

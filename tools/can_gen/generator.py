@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 CAN traffic generator for BBB #2 — generates good and bad CAN messages
-and controls the PRU fault injector for physical-layer noise.
+to exercise the sniffer's protocol/behavioral diagnostics.
 
 Usage:
     sudo python3 generator.py [--scenario SCENARIO ...] [--loop] [--channel can1]
@@ -15,88 +15,22 @@ Scenarios (can combine multiple with --scenario):
   dlc_mismatch   0x100 sent with DLC=4 instead of 8 (DLC_MISMATCH)
   range_viol     EngineSpeed set to 9000 rpm (> 8000 max; RANGE_VIOLATION)
   bus_flood      High-rate frames saturating the bus
-  glitch         PRU: one 400 ns dominant glitch
-  glitch_burst   PRU: ~5 glitches/s for GLITCH_BURST alert on sniffer
-  dominant       PRU: bus stuck dominant for 80 ms (DOMINANT_RUNAWAY)
-  intermittent   PRU: random glitch ~once/s
 
 Hardware (BBB #2):
   Transceiver on P9.24(RX) / P9.26(TX)  →  can1  (DCAN1, same pins as BBB #1)
-  P8.45 (PRU0 R30[0] output) wired to transceiver TXD alongside P9.26
-  for physical-layer fault injection (see tools/can_gen/setup_bbb2.sh).
 """
 
 import argparse
 import asyncio
-import mmap
 import struct
 import sys
 import time
 import random
-from dataclasses import dataclass, field
-from typing import Optional
 
 try:
     import can
 except ImportError:
     sys.exit("python-can not installed. Run: pip3 install python-can")
-
-# ── Shared memory for PRU fault injector ────────────────────────────────────
-FAULT_SHM_ADDR  = 0x9F000000
-FAULT_SHM_SIZE  = 0x1000
-FAULT_SHM_MAGIC = 0xFA017123
-
-FAULT_IDLE         = 0
-FAULT_GLITCH       = 1
-FAULT_GLITCH_BURST = 2
-FAULT_DOMINANT     = 3
-FAULT_INTERMITTENT = 4
-
-# pru_fault_shm_t: magic(I) fault_mode(I) faults_done(I) pad(I)
-_FAULT_HDR = struct.Struct("<IIII")
-
-
-class PruFault:
-    """Interface to the PRU fault injector via /dev/mem."""
-
-    def __init__(self) -> None:
-        try:
-            self._fd = open("/dev/mem", "r+b", buffering=0)
-            self._mm = mmap.mmap(self._fd.fileno(), FAULT_SHM_SIZE,
-                                 offset=FAULT_SHM_ADDR)
-            magic, _, _, _ = _FAULT_HDR.unpack_from(self._mm, 0)
-            if magic != FAULT_SHM_MAGIC:
-                print(f"[PRU] Warning: magic 0x{magic:08X} ≠ 0x{FAULT_SHM_MAGIC:08X}; "
-                      "fault PRU may not be running — physical faults disabled")
-                self._ok = False
-            else:
-                self._ok = True
-                print("[PRU] Fault injector connected.")
-        except PermissionError:
-            print("[PRU] /dev/mem not accessible — run as root for PRU faults")
-            self._ok = False
-        except Exception as e:
-            print(f"[PRU] Fault injector unavailable: {e}")
-            self._ok = False
-
-    def set_mode(self, mode: int) -> None:
-        if self._ok:
-            _FAULT_HDR.pack_into(self._mm, 0,
-                                 FAULT_SHM_MAGIC, mode,
-                                 _FAULT_HDR.unpack_from(self._mm, 0)[2], 0)
-
-    def faults_done(self) -> int:
-        if self._ok:
-            return _FAULT_HDR.unpack_from(self._mm, 0)[2]
-        return 0
-
-    def close(self) -> None:
-        if self._ok:
-            self.set_mode(FAULT_IDLE)
-        if hasattr(self, "_mm"):
-            self._mm.close()
-        if hasattr(self, "_fd"):
-            self._fd.close()
 
 
 # ── Message definitions (match the test DBC) ────────────────────────────────
@@ -283,73 +217,32 @@ async def task_cmd_resp(bus: can.Bus) -> None:
         *(poll(n, i * PERIOD_S / len(NODES)) for i, n in enumerate(NODES)))
 
 
-async def task_pru_glitch(pru: PruFault) -> None:
-    """One-shot physical glitch via PRU then idle."""
-    print("[PRU] glitch: single 400 ns dominant pulse")
-    pru.set_mode(FAULT_GLITCH)
-    await asyncio.sleep(0.1)
-    pru.set_mode(FAULT_IDLE)
-
-
-async def task_pru_glitch_burst(pru: PruFault) -> None:
-    """PRU ~5 glitches/s — triggers GLITCH_BURST on sniffer."""
-    print("[PRU] glitch_burst: ~5 glitches/s")
-    pru.set_mode(FAULT_GLITCH_BURST)
-    while True:
-        await asyncio.sleep(1.0)
-        print(f"[PRU] glitches injected so far: {pru.faults_done()}")
-
-
-async def task_pru_dominant(pru: PruFault) -> None:
-    """PRU holds bus dominant for 80 ms — DOMINANT_RUNAWAY on sniffer."""
-    print("[PRU] dominant: bus stuck dominant for 80 ms, then idle")
-    pru.set_mode(FAULT_DOMINANT)
-    await asyncio.sleep(0.080)
-    pru.set_mode(FAULT_IDLE)
-    print("[PRU] dominant: released")
-
-
-async def task_pru_intermittent(pru: PruFault) -> None:
-    """PRU random glitch ~1/s."""
-    print("[PRU] intermittent: random glitch ~once/s")
-    pru.set_mode(FAULT_INTERMITTENT)
-    while True:
-        await asyncio.sleep(1.0)
-
-
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 SCENARIO_MAP = {
-    "normal":       (task_normal,            False),
-    "cmd_resp":     (task_cmd_resp,          False),
-    "babble":       (task_babble,            False),
-    "missing":      (task_missing,           False),
-    "unknown_id":   (task_unknown_id,        False),
-    "dlc_mismatch": (task_dlc_mismatch,      False),
-    "range_viol":   (task_range_viol,        False),
-    "bus_flood":    (task_bus_flood,         False),
-    "glitch":       (task_pru_glitch,        True),   # True = needs PRU
-    "glitch_burst": (task_pru_glitch_burst,  True),
-    "dominant":     (task_pru_dominant,      True),
-    "intermittent": (task_pru_intermittent,  True),
+    "normal":       task_normal,
+    "cmd_resp":     task_cmd_resp,
+    "babble":       task_babble,
+    "missing":      task_missing,
+    "unknown_id":   task_unknown_id,
+    "dlc_mismatch": task_dlc_mismatch,
+    "range_viol":   task_range_viol,
+    "bus_flood":    task_bus_flood,
 }
 
 
 async def run(scenarios: list[str], channel: str, loop: bool) -> None:
-    pru = PruFault()
     bus = can.interface.Bus(channel=channel, interface="socketcan")
     print(f"[CAN] connected to {channel}")
     # Brief pause after socket open — let the CAN controller settle before
     # sending; simultaneous burst from asyncio.gather can overflow TX queue.
     await asyncio.sleep(0.2)
 
+    tasks: list = []
     try:
         while True:
-            tasks = []
-            for name in scenarios:
-                fn, needs_pru = SCENARIO_MAP[name]
-                arg = pru if needs_pru else bus
-                tasks.append(asyncio.create_task(fn(arg)))
+            tasks = [asyncio.create_task(SCENARIO_MAP[name](bus))
+                     for name in scenarios]
 
             if loop:
                 print(f"[gen] running {scenarios} — Ctrl-C to stop")
@@ -366,10 +259,8 @@ async def run(scenarios: list[str], channel: str, loop: bool) -> None:
     except asyncio.CancelledError:
         pass
     finally:
-        for t in tasks if 'tasks' in dir() else []:
+        for t in tasks:
             t.cancel()
-        pru.set_mode(FAULT_IDLE)
-        pru.close()
         bus.shutdown()
         print("[gen] shutdown complete")
 
@@ -390,8 +281,8 @@ def main() -> None:
 
     if args.list:
         print("Available scenarios:")
-        for name, (_, pru) in SCENARIO_MAP.items():
-            print(f"  {name:<16} {'[PRU]' if pru else ''}")
+        for name in SCENARIO_MAP:
+            print(f"  {name}")
         return
 
     scenarios = args.scenario or ["normal"]

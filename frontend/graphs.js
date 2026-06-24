@@ -90,9 +90,6 @@
   const idDeltaHistory = {};
   let histSelectedId = "";
 
-  // PRU vs kernel timestamp delta histogram (µs)
-  const pruKernelDeltas = [];
-
   // ── Chart handles ──────────────────────────────────────────────────────────
   const charts = {};
   let heatmapCanvas   = null;
@@ -304,40 +301,6 @@
       ys.push(counts[i]);
     }
     return { xs, ys };
-  }
-
-  // ── PRU vs kernel delta histogram ─────────────────────────────────────────
-  function buildPruHistChart() {
-    const el = document.getElementById("graph-pruhist-wrap");
-    if (!el) return;
-    destroyChart("pruHist");
-    const { xs, ys } = buildHistogram(pruKernelDeltas, HIST_BINS);
-    if (!xs.length) return;
-    const w = containerWidth(el);
-    charts.pruHist = new uPlot(
-      {
-        title:   "",
-        width:   w,
-        height:  160,
-        padding: [4, 10, 30, 50],
-        legend:  { show: true },
-        cursor:  { show: false },
-        scales:  { x: { time: false }, y: {} },
-        axes:    sharedAxes(),
-        plugins: [makeBarsPlugin(1)],
-        series: [
-          {},
-          {
-            label:  "count",
-            stroke: C.ok,
-            fill:   "rgba(76,175,125,0.45)",
-            width:  1,
-          },
-        ],
-      },
-      [xs, ys],
-      el,
-    );
   }
 
   // ── Per-ID interval histogram ──────────────────────────────────────────────
@@ -568,7 +531,7 @@
       }
     }
 
-    // Frames: heatmap, per-ID delta histogram, PRU-kernel delta histogram
+    // Frames: heatmap, per-ID delta histogram
     if (msg.frames && msg.frames.length) {
       let idsChanged = false;
       for (const f of msg.frames) {
@@ -589,13 +552,6 @@
           if (!idDeltaHistory[id]) idDeltaHistory[id] = [];
           idDeltaHistory[id].push(f.delta_us);
           if (idDeltaHistory[id].length > 2000) idDeltaHistory[id].splice(0, 500);
-        }
-
-        // PRU vs kernel delta (µs)
-        if (f.pru_ts_ns != null && f.kernel_ts != null) {
-          const delta_us = (f.pru_ts_ns - f.kernel_ts * 1e9) / 1000;
-          pruKernelDeltas.push(delta_us);
-          if (pruKernelDeltas.length > 2000) pruKernelDeltas.splice(0, 500);
         }
       }
       if (idsChanged && isActive) {
@@ -641,7 +597,6 @@
     }
 
     // Histograms: rebuild each tick (cheap for small data)
-    buildPruHistChart();
     if (histSelectedId) buildIdHistChart();
 
     renderHeatmap();
@@ -687,7 +642,6 @@
     buildTecRecChart();
     buildErrRateChart();
     buildLatencyChart();
-    buildPruHistChart();
     buildIdHistChart();
     // Heatmap auto-sizes inside renderHeatmap()
   }

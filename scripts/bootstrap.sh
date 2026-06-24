@@ -72,14 +72,8 @@ patch_uenv() {
     fi
 }
 
-patch_uenv "uboot_overlay_addr0" "/lib/firmware/BB-PRU0-CAN-TS-00A0.dtbo"
 patch_uenv "disable_uboot_overlay_video" "1"
 patch_uenv "enable_uboot_cape_universal" "0"
-
-# memmap must be in the cmdline value
-if ! grep -q "memmap=8K" "$UENV"; then
-    sed -i 's/^\(cmdline=.*quiet\)/\1 memmap=8K$0x9F000000/' "$UENV"
-fi
 
 echo "uEnv.txt changes:"
 diff "${UENV}.bak" "$UENV" || true

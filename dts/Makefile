@@ -1,4 +1,4 @@
-OVERLAYS   = BB-DCAN1-00A0.dtbo BB-PRU0-CAN-TS-00A0.dtbo
+OVERLAYS   = BB-DCAN1-00A0.dtbo
 DTC        ?= dtc
 DTCFLAGS    = -@ -I dts -O dtb -W no-unit_address_vs_reg
 DT_INCLUDE ?= /opt/source/dtb-5.10-ti/include

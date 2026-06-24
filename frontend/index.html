@@ -47,7 +47,6 @@
       <table id="frame-table">
         <thead>
           <tr>
-            <th>PRU Timestamp (ns)</th>
             <th>Kernel Timestamp (s)</th>
             <th>Arb ID</th>
             <th>DLC</th>
@@ -72,15 +71,6 @@
           <tr><td>CRC errors</td>  <td id="cnt-crc">0</td></tr>
           <tr><td>Form errors</td> <td id="cnt-form">0</td></tr>
           <tr><td>ACK errors</td>  <td id="cnt-ack">0</td></tr>
-        </table>
-      </div>
-
-      <div class="diag-card" id="card-signal-quality">
-        <h3>Signal Quality (last 1 s)</h3>
-        <table class="diag-table">
-          <tr><td>Glitches</td>       <td id="cnt-glitch">0</td></tr>
-          <tr><td>Aborted frames</td> <td id="cnt-abort">0</td></tr>
-          <tr><td>Dominant runaway</td><td id="runaway-badge" class="badge badge-ok">OK</td></tr>
         </table>
       </div>
 
@@ -166,7 +156,6 @@
       <div class="stat-box"><div id="stat-total">0</div><label>Total Frames</label></div>
       <div class="stat-box"><div id="stat-ids">0</div><label>Unique IDs</label></div>
       <div class="stat-box"><div id="stat-errs">0</div><label>Error Events</label></div>
-      <div class="stat-box"><div id="stat-aborts">0</div><label>Aborted Frames</label></div>
     </div>
   </section>
 
@@ -207,7 +196,7 @@
         </div>
       </div>
 
-      <!-- Row 4: Per-ID interval histogram + PRU/kernel delta histogram -->
+      <!-- Row 4: Per-ID interval histogram -->
       <div class="graphs-row">
         <div class="graph-card">
           <div class="graph-card-title">
@@ -215,10 +204,6 @@
             <select id="graph-id-select" class="graph-select"></select>
           </div>
           <div id="graph-idhist-wrap" class="graph-wrap"></div>
-        </div>
-        <div class="graph-card">
-          <div class="graph-card-title">PRU vs Kernel Timestamp Δ</div>
-          <div id="graph-pruhist-wrap" class="graph-wrap"></div>
         </div>
       </div>
 
